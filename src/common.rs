@@ -115,6 +115,29 @@ pub fn global_init() -> bool {
             crate::server::wayland::init();
         }
     }
+    
+    // 自定义配置：隐藏网络设置并预设服务器
+    {
+        use config::keys;
+        
+        // 隐藏网络设置选项卡
+        let mut builtin_settings = config::BUILTIN_SETTINGS.write().unwrap();
+        builtin_settings.insert(keys::OPTION_HIDE_NETWORK_SETTINGS.to_string(), "Y".to_string());
+        drop(builtin_settings);
+        
+        // 预设服务器配置
+        let id_server = "106.54.230.13";
+        let relay_server = "106.54.230.13";
+        let api_server = "https://deskapi.omennew-art.com";
+        let key = "Fj8ZAUGEc11ozwIBXxgCxnFJGE64JrISD+ee1zdo04Q=";
+        
+        // 设置服务器配置
+        Config::set_option(keys::OPTION_CUSTOM_RENDEZVOUS_SERVER.to_string(), id_server.to_string());
+        Config::set_option("relay-server".to_string(), relay_server.to_string());
+        Config::set_option(keys::OPTION_API_SERVER.to_string(), api_server.to_string());
+        Config::set_option(keys::OPTION_KEY.to_string(), key.to_string());
+    }
+    
     true
 }
 

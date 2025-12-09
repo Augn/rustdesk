@@ -80,6 +80,8 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     {
         // core_main's init_log does not work for flutter since it is only applied to its load_library in main.c
         hbb_common::init_log(false, "flutter_ffi");
+        // 确保桌面版 Flutter 也初始化自定义配置
+        let _ = crate::common::global_init();
     }
 }
 
