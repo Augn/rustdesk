@@ -61,7 +61,7 @@ final isWebOnWindows = isWebOnWindows_;
 final isWebOnLinux = isWebOnLinux_;
 final isWebOnMacOs = isWebOnMacOS_;
 var isMobile = isAndroid || isIOS;
-var version = '';
+var version = '1.0.1';
 int androidVersion = 0;
 
 // Only used on Linux.

@@ -2269,18 +2269,15 @@ class _AboutState extends State<_About> {
   @override
   Widget build(BuildContext context) {
     return futureBuilder(future: () async {
-      final license = await bind.mainGetLicense();
       final version = await bind.mainGetVersion();
       final buildDate = await bind.mainGetBuildDate();
       final fingerprint = await bind.mainGetFingerprint();
       return {
-        'license': license,
         'version': version,
         'buildDate': buildDate,
         'fingerprint': fingerprint
       };
     }(), hasData: (data) {
-      final license = data['license'].toString();
       final version = data['version'].toString();
       final buildDate = data['buildDate'].toString();
       final fingerprint = data['fingerprint'].toString();
@@ -2307,15 +2304,7 @@ class _AboutState extends State<_About> {
                         .marginSymmetric(vertical: 4.0)),
               InkWell(
                   onTap: () {
-                    launchUrlString('https://rustdesk.com/privacy.html');
-                  },
-                  child: Text(
-                    translate('Privacy Statement'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com');
+                    launchUrlString('https://omenew-art.com');
                   },
                   child: Text(
                     translate('Website'),
@@ -2333,14 +2322,16 @@ class _AboutState extends State<_About> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Copyright © ${DateTime.now().toString().substring(0, 4)} Purslane Ltd.\n$license',
+                            'Omen版权所有\nUmean提供技术支持\nHugh开发',
                             style: const TextStyle(color: Colors.white),
                           ),
+                          SizedBox(height: 8),
                           Text(
-                            translate('Slogan_tip'),
+                            '注意：未经允许传播或者在其他渠道下载到此版本，Omen有权追究其责任',
                             style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                                color: Colors.white70),
                           )
                         ],
                       ),

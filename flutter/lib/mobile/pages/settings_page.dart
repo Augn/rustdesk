@@ -896,12 +896,13 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           tiles: [
             SettingsTile(
                 onPressed: (context) async {
+                  const url = 'https://omenew-art.com';
                   await launchUrl(Uri.parse(url));
                 },
                 title: Text(translate("Version: ") + version),
                 value: Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('rustdesk.com',
+                  child: Text('omenew-art.com',
                       style: TextStyle(
                         decoration: TextDecoration.underline,
                       )),
@@ -924,10 +925,24 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                   ),
                   leading: Icon(Icons.fingerprint)),
             SettingsTile(
-              title: Text(translate("Privacy Statement")),
-              onPressed: (context) =>
-                  launchUrlString('https://rustdesk.com/privacy.html'),
-              leading: Icon(Icons.privacy_tip),
+              title: Text('版权信息'),
+              value: Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Omen版权所有', style: TextStyle(fontSize: 13)),
+                    Text('Umean提供技术支持', style: TextStyle(fontSize: 13)),
+                    Text('Hugh开发', style: TextStyle(fontSize: 13)),
+                    SizedBox(height: 8),
+                    Text(
+                      '注意：未经允许传播或者在其他渠道下载到此版本，Omen有权追究其责任',
+                      style: TextStyle(fontSize: 11, color: Colors.red),
+                    ),
+                  ],
+                ),
+              ),
+              leading: Icon(Icons.copyright),
             )
           ],
         ),
@@ -1034,21 +1049,35 @@ void showThemeSettings(OverlayDialogManager dialogManager) async {
 void showAbout(OverlayDialogManager dialogManager) {
   dialogManager.show((setState, close, context) {
     return CustomAlertDialog(
-      title: Text(translate('About RustDesk')),
+      title: Text('关于'),
       content: Wrap(direction: Axis.vertical, spacing: 12, children: [
         Text('Version: $version'),
         InkWell(
             onTap: () async {
-              const url = 'https://rustdesk.com/';
+              const url = 'https://omenew-art.com';
               await launchUrl(Uri.parse(url));
             },
             child: Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('rustdesk.com',
+              child: Text('omenew-art.com',
                   style: TextStyle(
                     decoration: TextDecoration.underline,
                   )),
             )),
+        SizedBox(height: 8),
+        Text(
+          'Omen版权所有\nUmean提供技术支持\nHugh开发',
+          style: TextStyle(fontSize: 13),
+        ),
+        SizedBox(height: 8),
+        Text(
+          '注意：未经允许传播或者在其他渠道下载到此版本，Omen有权追究其责任',
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.red,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ]),
       actions: [],
     );
