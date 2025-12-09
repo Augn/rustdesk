@@ -11,7 +11,6 @@ use serde_json::{json, Map, Value};
 #[cfg(not(target_os = "ios"))]
 use hbb_common::whoami;
 use hbb_common::{
-    allow_err,
     anyhow::{anyhow, Context},
     async_recursion::async_recursion,
     bail, base64,
@@ -924,13 +923,8 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 }
 
 pub fn check_software_update() {
-    if is_custom_client() {
-        return;
-    }
-    let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
-    if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
-        std::thread::spawn(move || allow_err!(do_check_software_update()));
-    }
+    // 已禁用版本更新检查
+    return;
 }
 
 // No need to check `danger_accept_invalid_cert` for now.
