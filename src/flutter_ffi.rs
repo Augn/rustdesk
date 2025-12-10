@@ -1616,7 +1616,7 @@ pub fn main_get_last_remote_id() -> String {
 }
 
 pub fn main_get_software_update_url() {
-    crate::common::check_software_update();
+    // crate::common::check_software_update(); // 已禁用版本更新检查
 }
 
 pub fn main_get_home_dir() -> String {
