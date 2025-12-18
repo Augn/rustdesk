@@ -37,7 +37,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("config_acc", "In order to control your Desktop remotely, you need to grant omendesk \"Accessibility\" permissions."),
         ("config_screen", "In order to access your Desktop remotely, you need to grant omendesk \"Screen Recording\" permissions."),
         ("Installation Path", "Installation path"),
-        ("agreement_tip", "By starting the installation, you accept the license agreement."),
+        ("agreement_tip", "This software is an internal version of Omen Company. If you obtained it through unauthorized channels, please delete it immediately."),
         ("Accept and Install", "Accept and install"),
         ("not_close_tcp_tip", "Don't close this window while you are using the tunnel"),
         ("Remote Host", "Remote host"),

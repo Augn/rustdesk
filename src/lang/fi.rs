@@ -156,7 +156,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Installation Path", "Asennuspolku"),
         ("Create start menu shortcuts", "Luo pikakuvakkeet Käynnistä valikkoon"),
         ("Create desktop icon", "Luo kuvake työpöydälle"),
-        ("agreement_tip", "Aloittamalla asennuksen hyväksyt käyttöoikeussopimuksen."),
+        ("agreement_tip", "This software is an internal version of Omen Company. If you obtained it through unauthorized channels, please delete it immediately."),
         ("Accept and Install", "Hyväksy ja asenna"),
         ("End-user license agreement", "Käyttöoikeussopimus"),
         ("Generating ...", "Luodaan ..."),

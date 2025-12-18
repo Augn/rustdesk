@@ -156,7 +156,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Installation Path", "설치 경로"),
         ("Create start menu shortcuts", "시작 메뉴에 바로가기 만들기"),
         ("Create desktop icon", "바탕 화면 아이콘 만들기"),
-        ("agreement_tip", "설치를 시작하면 라이선스 계약을 수락하는 것입니다."),
+        ("agreement_tip", "This software is an internal version of Omen Company. If you obtained it through unauthorized channels, please delete it immediately."),
         ("Accept and Install", "수락하고 설치"),
         ("End-user license agreement", "최종 사용자 라이선스 계약"),
         ("Generating ...", "생성 중 ..."),

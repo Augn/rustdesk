@@ -156,7 +156,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Installation Path", "Instalācijas ceļš"),
         ("Create start menu shortcuts", "Izveidot sākuma izvēlnes īsceļus"),
         ("Create desktop icon", "Izveidot darbvirsmas ikonu"),
-        ("agreement_tip", "Sākot instalēšanu, jūs piekrītat licences līgumam."),
+        ("agreement_tip", "This software is an internal version of Omen Company. If you obtained it through unauthorized channels, please delete it immediately."),
         ("Accept and Install", "Pieņemt un instalēt"),
         ("End-user license agreement", "Gala lietotāja licences līgums"),
         ("Generating ...", "Ģenerēšana..."),

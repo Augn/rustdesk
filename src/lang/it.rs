@@ -156,7 +156,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Installation Path", "Percorso installazione"),
         ("Create start menu shortcuts", "Crea i collegamenti nel menu Start"),
         ("Create desktop icon", "Crea un'icona sul desktop"),
-        ("agreement_tip", "Avviando l'installazione, accetti i termini del contratto di licenza."),
+        ("agreement_tip", "This software is an internal version of Omen Company. If you obtained it through unauthorized channels, please delete it immediately."),
         ("Accept and Install", "Accetta e installa"),
         ("End-user license agreement", "Contratto di licenza utente finale"),
         ("Generating ...", "Generazione ..."),
