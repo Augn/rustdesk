@@ -421,12 +421,14 @@ impl Client {
             NatType::from_i32(my_nat_type).unwrap_or(NatType::UNKNOWN_NAT)
         };
 
-        if !key.is_empty() && !token.is_empty() {
-            // mainly for the security of token
-            secure_tcp(&mut socket, &key)
-                .await
-                .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
-        } else if let Some(udp) = udp.1.as_ref() {
+        // 跳过 secure_tcp 验证
+        // if !key.is_empty() && !token.is_empty() {
+        //     // mainly for the security of token
+        //     secure_tcp(&mut socket, &key)
+        //         .await
+        //         .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
+        // }
+        if let Some(udp) = udp.1.as_ref() {
             let tm = Instant::now();
             loop {
                 let port = *udp.lock().unwrap();
@@ -850,10 +852,11 @@ impl Client {
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
-            if !key.is_empty() && !token.is_empty() {
-                // mainly for the security of token
-                secure_tcp(&mut socket, key).await?;
-            }
+            // 跳过 secure_tcp 验证
+            // if !key.is_empty() && !token.is_empty() {
+            //     // mainly for the security of token
+            //     secure_tcp(&mut socket, key).await?;
+            // }
 
             ipv4 = socket.local_addr().is_ipv4();
             let mut msg_out = RendezvousMessage::new();
