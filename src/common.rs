@@ -119,10 +119,10 @@ pub fn global_init() -> bool {
     {
         use config::keys;
         
-        // 隐藏网络设置选项卡
-        let mut builtin_settings = config::BUILTIN_SETTINGS.write().unwrap();
-        builtin_settings.insert(keys::OPTION_HIDE_NETWORK_SETTINGS.to_string(), "Y".to_string());
-        drop(builtin_settings);
+        // 临时显示网络设置选项卡用于测试
+        // let mut builtin_settings = config::BUILTIN_SETTINGS.write().unwrap();
+        // builtin_settings.insert(keys::OPTION_HIDE_NETWORK_SETTINGS.to_string(), "Y".to_string());
+        // drop(builtin_settings);
         
         // 预设服务器配置
         let id_server = "106.54.230.13";
