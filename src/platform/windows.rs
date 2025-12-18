@@ -1258,7 +1258,8 @@ fn get_install_info_with_subkey(subkey: String) -> (String, String, String, Stri
         "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\{}",
         crate::get_app_name()
     );
-    let exe = format!("{}\\{}.exe", path, crate::get_app_name());
+    // Use rustdesk.exe as the actual executable filename (from Cargo package name)
+    let exe = format!("{}\\rustdesk.exe", path);
     (subkey, path, start_menu, exe)
 }
 
