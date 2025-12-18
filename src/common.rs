@@ -128,13 +128,13 @@ pub fn global_init() -> bool {
         let id_server = "106.54.230.13";
         let relay_server = "106.54.230.13";
         let api_server = "https://deskapi.omennew-art.com";
-        let key = "umen123456";
         
         // 设置服务器配置
         Config::set_option(keys::OPTION_CUSTOM_RENDEZVOUS_SERVER.to_string(), id_server.to_string());
         Config::set_option("relay-server".to_string(), relay_server.to_string());
         Config::set_option(keys::OPTION_API_SERVER.to_string(), api_server.to_string());
-        Config::set_option(keys::OPTION_KEY.to_string(), key.to_string());
+        // Key 留空 - 服务器使用简单密码而非公钥加密
+        Config::set_option(keys::OPTION_KEY.to_string(), "".to_string());
     }
     
     true
