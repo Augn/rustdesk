@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "服务正在运行"),
         ("Service is not running", "服务未运行"),
         ("not_ready_status", "未就绪，请检查网络连接"),
+        ("login_required_to_connect", "需要登录才能连接远程设备"),
         ("Control Remote Desktop", "控制远程桌面"),
         ("Transfer file", "传输文件"),
         ("Connect", "连接"),

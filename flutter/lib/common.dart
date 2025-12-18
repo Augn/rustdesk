@@ -2511,6 +2511,12 @@ connect(BuildContext context, String id,
     String? connToken,
     bool? isSharedPassword}) async {
   if (id == '') return;
+  
+  // 检查登录状态 - Omen内部版本要求登录后才能连接
+  if (!gFFI.userModel.isLogin) {
+    showToast(translate('login_required_to_connect'));
+    return;
+  }
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
       if (Get.isRegistered<IDTextEditingController>()) {

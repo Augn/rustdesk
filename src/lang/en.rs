@@ -15,6 +15,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("API Server", "API server"),
         ("invalid_http", "must start with http:// or https://"),
         ("server_not_support", "Not yet supported by the server"),
+        ("login_required_to_connect", "Login required to connect to remote devices"),
         ("Password Required", "Password required"),
         ("Wrong Password", "Wrong password"),
         ("Connection Error", "Connection error"),
