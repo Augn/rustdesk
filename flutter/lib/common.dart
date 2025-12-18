@@ -2513,7 +2513,8 @@ connect(BuildContext context, String id,
   if (id == '') return;
   
   // 检查登录状态 - Omen内部版本要求登录后才能连接
-  if (!gFFI.userModel.isLogin) {
+  // 如果 connToken 不为空,说明是从已有会话切换功能,无需再次检查登录
+  if (connToken == null && !gFFI.userModel.isLogin) {
     showToast(translate('login_required_to_connect'));
     return;
   }
