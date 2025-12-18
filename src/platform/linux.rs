@@ -434,10 +434,9 @@ fn set_x11_env(desktop: &Desktop) {
 
 #[inline]
 fn stop_rustdesk_servers() {
-    let _ = run_cmds(&format!(
-        r##"ps -ef | grep -E '{} +--server' | awk '{{print $2}}' | xargs -r kill -9"##,
-        crate::get_app_name().to_lowercase(),
-    ));
+    let _ = run_cmds(
+        r##"ps -ef | grep -E 'rustdesk +--server' | awk '{print $2}' | xargs -r kill -9"##,
+    );
 }
 
 #[inline]
@@ -446,10 +445,9 @@ fn stop_subprocess() {
         r##"ps -ef | grep '/etc/{}/xorg.conf' | grep -v grep | awk '{{print $2}}' | xargs -r kill -9"##,
         crate::get_app_name().to_lowercase(),
     ));
-    let _ = run_cmds(&format!(
-        r##"ps -ef | grep -E '{} +--cm-no-ui' | grep -v grep | awk '{{print $2}}' | xargs -r kill -9"##,
-        crate::get_app_name().to_lowercase(),
-    ));
+    let _ = run_cmds(
+        r##"ps -ef | grep -E 'rustdesk +--cm-no-ui' | grep -v grep | awk '{print $2}' | xargs -r kill -9"##,
+    );
 }
 
 fn should_start_server(
@@ -1399,7 +1397,7 @@ mod desktop {
         }
 
         fn get_display_xauth_xwayland(&mut self) {
-            let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
+            let tray = "rustdesk +--tray";
             for _ in 1..=10 {
                 let display_proc = vec![
                     XDG_DESKTOP_PORTAL,
@@ -1407,7 +1405,7 @@ mod desktop {
                     IBUS_DAEMON,
                     GNOME_GOA_DAEMON,
                     PLASMA_KDED,
-                    tray.as_str(),
+                    tray,
                 ];
                 for proc in display_proc {
                     self.display = get_env(ENV_KEY_DISPLAY, &self.uid, proc);
@@ -1509,7 +1507,7 @@ mod desktop {
 
         fn get_xauth_x11(&mut self) {
             // try by direct access to window manager process by name
-            let tray = format!("{} +--tray", crate::get_app_name().to_lowercase());
+            let tray = "rustdesk +--tray";
             for _ in 1..=10 {
                 let display_proc = vec![
                     XWAYLAND,
@@ -1518,7 +1516,7 @@ mod desktop {
                     PLASMA_KDED,
                     XFCE4_PANEL,
                     SDDM_GREETER,
-                    tray.as_str(),
+                    tray,
                 ];
                 for proc in display_proc {
                     self.xauth = get_env("XAUTHORITY", &self.uid, proc);
@@ -1606,10 +1604,7 @@ mod desktop {
 
         fn set_is_subprocess(&mut self) {
             self.is_rustdesk_subprocess = false;
-            let cmd = format!(
-                "ps -ef | grep '{}/xorg.conf' | grep -v grep | wc -l",
-                crate::get_app_name().to_lowercase()
-            );
+            let cmd = "ps -ef | grep 'rustdesk/xorg.conf' | grep -v grep | wc -l";
             if let Ok(res) = run_cmds(&cmd) {
                 if res.trim() != "0" {
                     self.is_rustdesk_subprocess = true;
