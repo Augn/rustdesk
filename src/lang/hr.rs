@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Servis je pokrenut"),
         ("Service is not running", "Servis nije pokrenut"),
         ("not_ready_status", "Nije spremno. Provjerite vezu."),
+        ("login_required_to_connect", "Potrebna je prijava za povezivanje s udaljenim uređajima"),
         ("Control Remote Desktop", "Upravljanje udaljenom radnom površinom"),
         ("Transfer file", "Prijenos datoteke"),
         ("Connect", "Spajanje"),

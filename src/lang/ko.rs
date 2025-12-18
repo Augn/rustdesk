@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "서비스가 실행 중 입니다"),
         ("Service is not running", "서비스가 실행되지 않았습니다"),
         ("not_ready_status", "준비되지 않았습니다. 연결을 확인해 주세요"),
+        ("login_required_to_connect", "원격 장치에 연결하려면 로그인이 필요합니다"),
         ("Control Remote Desktop", "원격 데스크탑 제어"),
         ("Transfer file", "파일 전송"),
         ("Connect", "연결"),

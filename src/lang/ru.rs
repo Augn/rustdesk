@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Служба запущена"),
         ("Service is not running", "Служба не запущена"),
         ("not_ready_status", "Не подключено. Проверьте соединение."),
+        ("login_required_to_connect", "Требуется авторизация для подключения к удалённым устройствам"),
         ("Control Remote Desktop", "Новое соединение"),
         ("Transfer file", "Передать файлы"),
         ("Connect", "Подключиться"),

@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Tjenesten kjører"),
         ("Service is not running", " tilknyttede tjenesten kjører ikke"),
         ("not_ready_status", "Ikke klar. Vennligst sjekk din tilkobling"),
+        ("login_required_to_connect", "Pålogging kreves for å koble til eksterne enheter"),
         ("Control Remote Desktop", "Kontroller fjernskrivebord"),
         ("Transfer file", "Overfør fil"),
         ("Connect", "Koble til"),

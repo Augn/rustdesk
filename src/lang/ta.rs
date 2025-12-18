@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "சேவை இயங்குகிறது"),
         ("Service is not running", "சேவை இயங்கவில்லை."),
         ("not_ready_status", "இயக்கம் இல்லை"),
+        ("login_required_to_connect", "தூர சாதனங்களுடன் இணைக்க உள்நுழைவு தேவை"),
         ("Control Remote Desktop", "ரிமோட் டெஸ்க்டாப் கட்டுப்பாடு"),
         ("Transfer file", "கோப்பு பரிமாற்றம்"),
         ("Connect", "இணைக்க"),

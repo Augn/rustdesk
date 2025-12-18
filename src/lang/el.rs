@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Η υπηρεσία εκτελείται"),
         ("Service is not running", "Η υπηρεσία δεν εκτελείται"),
         ("not_ready_status", "Δεν είναι έτοιμο. Ελέγξτε τη σύνδεσή σας στο δίκτυο"),
+        ("login_required_to_connect", "Απαιτείται σύνδεση για να συνδεθείτε σε απομακρυσμένες συσκευές"),
         ("Control Remote Desktop", "Έλεγχος απομακρυσμένου σταθμού εργασίας"),
         ("Transfer file", "Μεταφορά αρχείου"),
         ("Connect", "Σύνδεση"),

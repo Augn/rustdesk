@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Pakalpojums darbojas"),
         ("Service is not running", "Pakalpojums nedarbojas"),
         ("not_ready_status", "Nav gatavs. Lūdzu, pārbaudiet savienojumu"),
+        ("login_required_to_connect", "Pieslēgšanās nepieciešama, lai savienotos ar attālinātām ierīcēm"),
         ("Control Remote Desktop", "Vadīt attālo darbvirsmu"),
         ("Transfer file", "Pārsūtīt failu"),
         ("Connect", "Savienoties"),

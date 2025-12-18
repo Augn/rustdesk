@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "De service loopt."),
         ("Service is not running", "De service loopt niet"),
         ("not_ready_status", "Niet verbonden met de server, controleer de netwerkverbinding"),
+        ("login_required_to_connect", "Inloggen vereist om verbinding te maken met externe apparaten"),
         ("Control Remote Desktop", "Beheer Extern Bureaublad"),
         ("Transfer file", "Bestand overzetten"),
         ("Connect", "Verbinden"),

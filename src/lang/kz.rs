@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Сербес істеуде"),
         ("Service is not running", "Сербес істемеуде"),
         ("not_ready_status", "Дайын емес. Қосылымды тексеруді өтінеміз"),
+        ("login_required_to_connect", "Қашықтағы құрылғыларға қосылу үшін кіру қажет"),
         ("Control Remote Desktop", "Қашықтағы Жұмыс үстелін Басқару"),
         ("Transfer file", "Файыл Тасымалдау"),
         ("Connect", "Қосылу"),

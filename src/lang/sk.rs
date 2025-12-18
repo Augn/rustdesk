@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Služba je aktívna"),
         ("Service is not running", "Služba je vypnutá"),
         ("not_ready_status", "Nepripravené. Skontrolujte svoje sieťové pripojenie."),
+        ("login_required_to_connect", "Na pripojenie k vzdialeným zariadeniam je potrebné prihlásenie"),
         ("Control Remote Desktop", "Ovládať vzdialenú plochu"),
         ("Transfer file", "Prenos súborov"),
         ("Connect", "Pripojiť"),

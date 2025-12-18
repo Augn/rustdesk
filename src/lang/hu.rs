@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Szolgáltatás aktív"),
         ("Service is not running", "Szolgáltatás inaktív"),
         ("not_ready_status", "Kapcsolódási hiba. Ellenőrizze a hálózati beállításokat."),
+        ("login_required_to_connect", "Bejelentkezés szükséges a távoli eszközökhöz való csatlakozáshoz"),
         ("Control Remote Desktop", "Távoli számítógép vezérlése"),
         ("Transfer file", "Fájlátvitel"),
         ("Connect", "Kapcsolódás"),

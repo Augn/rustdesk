@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Layanan berjalan"),
         ("Service is not running", "Layanan tidak berjalan"),
         ("not_ready_status", "Belum siap digunakan. Silakan periksa koneksi"),
+        ("login_required_to_connect", "Login diperlukan untuk terhubung ke perangkat jarak jauh"),
         ("Control Remote Desktop", "Lakukan Kontrol PC dari jarak jauh"),
         ("Transfer file", "Transfer File"),
         ("Connect", "Sambungkan"),

@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "El servei s'està executant."),
         ("Service is not running", "El servei no s'està executant."),
         ("not_ready_status", "No disponible. Verifiqueu la connexió"),
+        ("login_required_to_connect", "Es requereix inici de sessió per connectar-se a dispositius remots"),
         ("Control Remote Desktop", "Dispositiu remot"),
         ("Transfer file", "Transfereix fitxers"),
         ("Connect", "Connecta"),

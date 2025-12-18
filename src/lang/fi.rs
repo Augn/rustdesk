@@ -13,6 +13,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Service is running", "Palvelu on käynnissä"),
         ("Service is not running", "Palvelu ei ole käynnissä"),
         ("not_ready_status", "Ei valmis tarkista yhteys."),
+        ("login_required_to_connect", "Kirjautuminen vaaditaan etälaitteiden yhdistämiseen"),
         ("Control Remote Desktop", "Hallitse etätyöpöytää"),
         ("Transfer file", "Siirrä tiedosto"),
         ("Connect", "Yhdistä"),
