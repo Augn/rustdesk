@@ -824,7 +824,7 @@ pub fn extract_update_dmg(file: &str) {
 }
 
 fn extract_dmg(dmg_path: &str, target_dir: &str) -> ResultType<()> {
-    let mount_point = "/Volumes/RustDeskUpdate";
+    let mount_point = format!("/Volumes/{}Update", crate::get_app_name());
     let target_path = Path::new(target_dir);
 
     if target_path.exists() {
@@ -833,22 +833,22 @@ fn extract_dmg(dmg_path: &str, target_dir: &str) -> ResultType<()> {
     std::fs::create_dir_all(target_path)?;
 
     let status = Command::new("hdiutil")
-        .args(&["attach", "-nobrowse", "-mountpoint", mount_point, dmg_path])
+        .args(&["attach", "-nobrowse", "-mountpoint", &mount_point, dmg_path])
         .status()?;
 
     if !status.success() {
         bail!("Failed to attach DMG image at {}: {:?}", dmg_path, status);
     }
 
-    struct DmgGuard(&'static str);
+    struct DmgGuard(String);
     impl Drop for DmgGuard {
         fn drop(&mut self) {
             let _ = Command::new("hdiutil")
-                .args(&["detach", self.0, "-force"])
+                .args(&["detach", &self.0, "-force"])
                 .status();
         }
     }
-    let _guard = DmgGuard(mount_point);
+    let _guard = DmgGuard(mount_point.clone());
 
     let app_name = format!("{}.app", crate::get_app_name());
     let src_path = format!("{}/{}", mount_point, app_name);
