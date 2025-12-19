@@ -1563,6 +1563,9 @@ fn get_before_uninstall(kill_self: bool) -> String {
     sc delete {app_name}
     taskkill /F /IM {broker_exe}
     taskkill /F /IM {app_name}.exe{filter}
+    timeout /t 1 /nobreak > nul
+    taskkill /F /IM {broker_exe} 2>nul
+    taskkill /F /IM {app_name}.exe{filter} 2>nul
     reg delete HKEY_CLASSES_ROOT\\.{ext} /f
     reg delete HKEY_CLASSES_ROOT\\{ext} /f
     netsh advfirewall firewall delete rule name=\"{app_name} Service\"
@@ -1607,7 +1610,25 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> String {
     {uninstall_cert_cmd}
     reg delete {subkey} /f
     {uninstall_amyuni_idd}
-    if exist \"{path}\" rd /s /q \"{path}\"
+    timeout /t 2 /nobreak > nul
+    if exist \"{path}\" (
+        rd /s /q \"{path}\"
+        if exist \"{path}\" (
+            timeout /t 2 /nobreak > nul
+            rd /s /q \"{path}\"
+        )
+        if exist \"{path}\" (
+            timeout /t 3 /nobreak > nul
+            rd /s /q \"{path}\"
+        )
+        if exist \"{path}\" (
+            for /f \"delims=\" %%i in ('dir /b /a \"{path}\"') do (
+                del /f /q /a \"{path}\\%%i\"
+                rd /s /q \"{path}\\%%i\"
+            )
+            rd /s /q \"{path}\"
+        )
+    )
     if exist \"{start_menu}\" rd /s /q \"{start_menu}\"
     if exist \"%PUBLIC%\\Desktop\\{app_name}.lnk\" del /f /q \"%PUBLIC%\\Desktop\\{app_name}.lnk\"
     if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
