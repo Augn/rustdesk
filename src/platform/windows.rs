@@ -3095,6 +3095,27 @@ pub fn is_service_running(service_name: &str) -> bool {
     }
 }
 
+/// Start the Windows service
+pub fn start_service() -> ResultType<()> {
+    use std::process::Command;
+    
+    let service_name = crate::get_app_name();
+    log::info!("Starting service: {}", service_name);
+    
+    // Use sc command to start the service
+    let output = Command::new("sc")
+        .args(&["start", &service_name])
+        .output()?;
+    
+    if output.status.success() {
+        log::info!("Service {} started successfully", service_name);
+        Ok(())
+    } else {
+        let error_msg = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to start service {}: {}", service_name, error_msg);
+    }
+}
+
 pub fn is_x64() -> bool {
     const PROCESSOR_ARCHITECTURE_AMD64: u16 = 9;
 
