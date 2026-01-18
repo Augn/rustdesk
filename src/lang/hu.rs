@@ -726,17 +726,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Allow insecure TLS fallback", "Nem biztonságos TLS-tartalék engedélyezése"),
         ("allow-insecure-tls-fallback-tip", "Alapértelmezés szerint a omendesk ellenőrzi a kiszolgáló tanúsítványát a TLS-protokollok esetében. Ha ez a beállítás engedélyezve van, a omendesk kihagyja az ellenőrzési lépést, és az ellenőrzés sikertelensége esetén folytatja a műveletet."),
         ("Disable UDP", "UDP letiltása"),
-<<<<<<< HEAD
         ("disable-udp-tip", "Meghatározza, hogy csak TCP-t használjon-e. Ha ez az beállítás engedélyezve van, a omendesk nem fogja többé használni a 21116-os UDP-portot, helyette a 21116-os TCP-portot fogja használni."),
         ("server-oss-not-support-tip", "MEGJEGYZÉS: Az OSS omendesk kiszolgáló nem támogatja ezt a funkciót."),
-        ("input note here", "Megjegyzés bevitele"),
-        ("note-at-conn-end-tip", "Megjegyzés a kapcsolat végén"),
-=======
-        ("disable-udp-tip", "Meghatározza, hogy csak TCP-t használjon-e. Ha ez az beállítás engedélyezve van, a RustDesk nem fogja többé használni a 21116-os UDP-portot, helyette a 21116-os TCP-portot fogja használni."),
-        ("server-oss-not-support-tip", "MEGJEGYZÉS: Az OSS RustDesk kiszolgáló nem támogatja ezt a funkciót."),
         ("input note here", "Megjegyzés beírása"),
         ("note-at-conn-end-tip", "Kérjen megjegyzést a kapcsolat végén"),
->>>>>>> upstream/master
         ("Show terminal extra keys", "További terminálgombok megjelenítése"),
         ("Relative mouse mode", "Relatív egérmód"),
         ("rel-mouse-not-supported-peer-tip", "A kapcsolódott partner nem támogatja a relatív egérmódot."),

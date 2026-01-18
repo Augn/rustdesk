@@ -409,13 +409,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Select local keyboard type", "Wybierz lokalny typ klawiatury"),
         ("software_render_tip", "Jeżeli posiadasz kartę graficzną Nvidia i okno zamyka się natychmiast po nawiązaniu połączenia, instalacja sterownika nouveau i wybór renderowania programowego mogą pomóc. Restart aplikacji jest wymagany."),
         ("Always use software rendering", "Zawsze używaj renderowania programowego"),
-<<<<<<< HEAD
         ("config_input", "By kontrolować zdalne urządzenie przy pomocy klawiatury, musisz udzielić aplikacji omendesk uprawnień do \"Urządzeń Wejściowych\"."),
-        ("config_microphone", "Aby umożliwić zdalne rozmowy należy przyznać RuskDesk uprawnienia do \"Nagrań audio\"."),
-=======
-        ("config_input", "By kontrolować zdalne urządzenie przy pomocy klawiatury, musisz udzielić aplikacji RustDesk uprawnień do \"Urządzeń Wejściowych\"."),
-        ("config_microphone", "Aby umożliwić zdalne rozmowy należy przyznać RustDesk uprawnienia do \"Nagrań audio\"."),
->>>>>>> upstream/master
+        ("config_microphone", "Aby umożliwić zdalne rozmowy należy przyznać omendesk uprawnienia do \"Nagrań audio\"."),
         ("request_elevation_tip", "Możesz poprosić o podniesienie uprawnień jeżeli ktoś posiada dostęp do zdalnego urządzenia."),
         ("Wait", "Czekaj"),
         ("Elevation Error", "Błąd przy podnoszeniu uprawnień"),
@@ -729,10 +724,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Alias", "Alias"),
         ("ScrollEdge", "Przewijanie na krawędzi"),
         ("Allow insecure TLS fallback", "Zezwól na nie zweryfikowane połączenia TLS"),
-        ("allow-insecure-tls-fallback-tip", "Domyślnie RustDesk weryfikuje certyfikat serwera dla protokołów korzystających z TLS.\n Po włączeniu tej opcji, RustDesk pominie etap weryfikacji i będzie kontynuował działanie w przypadku negatywnej weryfikacji."),
+        ("allow-insecure-tls-fallback-tip", "Domyślnie omendesk weryfikuje certyfikat serwera dla protokołów korzystających z TLS.\n Po włączeniu tej opcji, omendesk pominie etap weryfikacji i będzie kontynuował działanie w przypadku negatywnej weryfikacji."),
         ("Disable UDP", "Wyłącz protokół UDP"),
-        ("disable-udp-tip", "Kontroluje, czy używać wyłącznie protokołu TCP.\nPo włączeniu tej opcji, RustDesk nie będzie używać protokołu UDP 21116, zamiast niego będzie używać protokołu TCP 21116."),
-        ("server-oss-not-support-tip", "UWAGA: Serwer OSS RustDesk nie obsługuje tej funkcji."),
+        ("disable-udp-tip", "Kontroluje, czy używać wyłącznie protokołu TCP.\nPo włączeniu tej opcji, omendesk nie będzie używać protokołu UDP 21116, zamiast niego będzie używać protokołu TCP 21116."),
+        ("server-oss-not-support-tip", "UWAGA: Serwer OSS omendesk nie obsługuje tej funkcji."),
         ("input note here", "Wstaw tutaj notatkę"),
         ("note-at-conn-end-tip", "Poproś o notatkę po zakończeniu połączenia."),
         ("Show terminal extra keys", "Pokaż dodatkowe klawisze terminala"),

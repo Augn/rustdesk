@@ -194,17 +194,13 @@ pub fn core_main() -> Option<Vec<String>> {
         #[cfg(windows)]
         {
             hbb_common::config::PeerConfig::preload_peers();
-            // 自动安装服务（Windows）
+            // 仅当程序已正式安装时，才尝试启动服务
+            // 未安装时不自动安装服务（便携模式/开发模式）
             if crate::platform::is_installed() && !crate::platform::is_self_service_running() {
                 log::info!("Service not running, attempting to start service on Windows...");
-                // 如果已安装但服务未运行，尝试启动服务
                 if let Err(e) = crate::platform::start_service() {
                     log::error!("Failed to start service: {}", e);
                 }
-            } else if !crate::platform::is_installed() {
-                log::info!("Service not installed, attempting auto-install on Windows...");
-                // 如果未安装，尝试安装服务
-                crate::platform::install_service();
             }
         }
         std::thread::spawn(move || crate::start_server(false, no_server));
