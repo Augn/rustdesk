@@ -27,6 +27,7 @@ use hbb_common::platform::linux::run_cmds;
 #[cfg(target_os = "android")]
 use hbb_common::protobuf::EnumOrUnknown;
 use hbb_common::{
+    config::decode_permanent_password_h1_from_storage,
     config::{self, keys, Config, TrustedDevice},
     fs::{self, can_enable_overwrite_detection, JobType},
     futures::{SinkExt, StreamExt},
@@ -74,6 +75,19 @@ lazy_static::lazy_static! {
     pub static ref CONTROL_PERMISSIONS_ARRAY: Arc::<Mutex<Vec<(i32, ControlPermissions)>>> = Default::default();
     static ref SWITCH_SIDES_UUID: Arc::<Mutex<HashMap<String, (Instant, uuid::Uuid)>>> = Default::default();
     static ref WAKELOCK_SENDER: Arc::<Mutex<std::sync::mpsc::Sender<(usize, usize)>>> = Arc::new(Mutex::new(start_wakelock_thread()));
+    static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    // Avoid data-dependent early exits.
+    let mut x: u8 = 0;
+    for i in 0..a.len() {
+        x |= a[i] ^ b[i];
+    }
+    x == 0
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -559,7 +573,9 @@ impl Connection {
                     match data {
                         ipc::Data::Authorize => {
                             conn.require_2fa.take();
-                            conn.send_logon_response().await;
+                            if !conn.send_logon_response_and_keep_alive().await {
+                                break;
+                            }
                             if conn.port_forward_socket.is_some() {
                                 break;
                             }
@@ -906,6 +922,7 @@ impl Connection {
                 _ = second_timer.tick() => {
                     #[cfg(windows)]
                     conn.portable_check();
+                    raii::AuthedConnID::check_wake_lock_on_setting_changed();
                     if let Some((instant, minute)) = conn.auto_disconnect_timer.as_ref() {
                         if instant.elapsed().as_secs() > minute * 60 {
                             conn.send_close_reason_no_retry("Connection failed due to inactivity").await;
@@ -1336,9 +1353,66 @@ impl Connection {
         crate::post_request(url, v.to_string(), "").await
     }
 
-    async fn send_logon_response(&mut self) {
+    fn normalize_port_forward_target(pf: &mut PortForward) -> (String, bool) {
+        let mut is_rdp = false;
+        if pf.host == "RDP" && pf.port == 0 {
+            pf.host = "localhost".to_owned();
+            pf.port = 3389;
+            is_rdp = true;
+        }
+        if pf.host.is_empty() {
+            pf.host = "localhost".to_owned();
+        }
+        (format!("{}:{}", pf.host, pf.port), is_rdp)
+    }
+
+    async fn connect_port_forward_if_needed(&mut self) -> bool {
+        if self.port_forward_socket.is_some() {
+            return true;
+        }
+        let Some(login_request::Union::PortForward(pf)) = self.lr.union.as_ref() else {
+            return true;
+        };
+        let mut pf = pf.clone();
+        let (mut addr, is_rdp) = Self::normalize_port_forward_target(&mut pf);
+        self.port_forward_address = addr.clone();
+        match timeout(3000, TcpStream::connect(&addr)).await {
+            Ok(Ok(sock)) => {
+                self.port_forward_socket = Some(Framed::new(sock, BytesCodec::new()));
+                true
+            }
+            Ok(Err(e)) => {
+                log::warn!("Port forward connect failed for {}: {}", addr, e);
+                if is_rdp {
+                    addr = "RDP".to_owned();
+                }
+                self.send_login_error(format!(
+                    "Failed to access remote {}. Please make sure it is reachable/open.",
+                    addr
+                ))
+                .await;
+                false
+            }
+            Err(e) => {
+                log::warn!("Port forward connect timed out for {}: {}", addr, e);
+                if is_rdp {
+                    addr = "RDP".to_owned();
+                }
+                self.send_login_error(format!(
+                    "Failed to access remote {}. Please make sure it is reachable/open.",
+                    addr
+                ))
+                .await;
+                false
+            }
+        }
+    }
+
+    // Returns whether this connection should be kept alive.
+    // `true` does not necessarily mean authorization succeeded (e.g. REQUIRE_2FA case).
+    async fn send_logon_response_and_keep_alive(&mut self) -> bool {
         if self.authorized {
-            return;
+            return true;
         }
         if self.require_2fa.is_some() && !self.is_recent_session(true) && !self.from_switch {
             self.require_2fa.as_ref().map(|totp| {
@@ -1369,7 +1443,11 @@ impl Connection {
                 }
             });
             self.send_login_error(crate::client::REQUIRE_2FA).await;
-            return;
+            // Keep the connection alive so the client can continue with 2FA.
+            return true;
+        }
+        if !self.connect_port_forward_if_needed().await {
+            return false;
         }
         self.authorized = true;
         let (conn_type, auth_conn_type) = if self.file_transfer.is_some() {
@@ -1418,7 +1496,7 @@ impl Connection {
             pi.platform = "Android".into();
         }
         #[cfg(all(target_os = "macos", not(feature = "unix-file-copy-paste")))]
-        let platform_additions = serde_json::Map::new();
+        let mut platform_additions = serde_json::Map::new();
         #[cfg(any(
             target_os = "windows",
             target_os = "linux",
@@ -1446,6 +1524,13 @@ impl Connection {
             if crate::platform::is_installed() {
                 platform_additions.extend(virtual_display_manager::get_platform_additions());
             }
+            platform_additions.insert(
+                "supported_privacy_mode_impl".into(),
+                json!(privacy_mode::get_supported_privacy_mode_impl()),
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
             platform_additions.insert(
                 "supported_privacy_mode_impl".into(),
                 json!(privacy_mode::get_supported_privacy_mode_impl()),
@@ -1485,7 +1570,7 @@ impl Connection {
             res.set_peer_info(pi);
             msg_out.set_login_response(res);
             self.send(msg_out).await;
-            return;
+            return true;
         }
         #[cfg(target_os = "linux")]
         if self.is_remote() {
@@ -1508,7 +1593,7 @@ impl Connection {
                 let mut msg_out = Message::new();
                 msg_out.set_login_response(res);
                 self.send(msg_out).await;
-                return;
+                return true;
             }
         }
         #[allow(unused_mut)]
@@ -1662,6 +1747,7 @@ impl Connection {
                 self.try_sub_monitor_services();
             }
         }
+        true
     }
 
     fn try_sub_camera_displays(&mut self) {
@@ -1804,6 +1890,7 @@ impl Connection {
             port_forward: self.port_forward_address.clone(),
             peer_id,
             name,
+            avatar: self.lr.avatar.clone(),
             authorized,
             keyboard: self.keyboard,
             clipboard: self.clipboard,
@@ -1895,23 +1982,53 @@ impl Connection {
         self.tx_input.send(MessageInput::Key((msg, press))).ok();
     }
 
-    fn validate_one_password(&self, password: String) -> bool {
-        if password.len() == 0 {
-            return false;
-        }
-        let mut hasher = Sha256::new();
-        hasher.update(password);
-        hasher.update(&self.hash.salt);
+    fn verify_h1(&self, h1: &[u8]) -> bool {
         let mut hasher2 = Sha256::new();
-        hasher2.update(&hasher.finalize()[..]);
-        hasher2.update(&self.hash.challenge);
-        hasher2.finalize()[..] == self.lr.password[..]
+        hasher2.update(h1);
+        hasher2.update(self.hash.challenge.as_bytes());
+        // A normal `==` on slices may short-circuit on the first mismatch, which can leak how many leading
+        // bytes matched via timing. In typical remote scenarios this is difficult to exploit due to network
+        // jitter, changing challenges, and login attempt throttling, but a constant-time comparison here is
+        // low-cost defensive programming.
+        constant_time_eq(&hasher2.finalize()[..], &self.lr.password[..])
     }
 
-    fn validate_password(&mut self) -> bool {
+    #[inline]
+    fn validate_one_password(&self, password: &str) -> bool {
+        self.validate_password_plain(password)
+    }
+
+    fn validate_password_plain(&self, password: &str) -> bool {
+        if password.is_empty() {
+            return false;
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        hasher.update(self.hash.salt.as_bytes());
+        let h1_plain = hasher.finalize();
+        self.verify_h1(&h1_plain[..])
+    }
+
+    fn validate_password_storage(&self, storage: &str) -> bool {
+        if storage.is_empty() {
+            return false;
+        }
+
+        // Use strict decode success to detect hashed storage.
+        // If decode fails, treat as legacy plaintext storage for compatibility.
+        if let Some(h1) = decode_permanent_password_h1_from_storage(storage) {
+            return self.verify_h1(&h1[..]);
+        }
+
+        // Legacy plaintext storage path.
+        self.validate_password_plain(storage)
+    }
+
+    fn validate_password(&mut self, allow_permanent_password: bool) -> bool {
         if password::temporary_enabled() {
             let password = password::temporary_password();
-            if self.validate_one_password(password.clone()) {
+            if self.validate_one_password(&password) {
                 raii::AuthedConnID::update_or_insert_session(
                     self.session_key(),
                     Some(password),
@@ -1920,9 +2037,32 @@ impl Connection {
                 return true;
             }
         }
-        if password::permanent_enabled() {
-            if self.validate_one_password(Config::get_permanent_password()) {
-                return true;
+        if password::permanent_enabled() || allow_permanent_password {
+            let print_fallback = || {
+                if allow_permanent_password && !password::permanent_enabled() {
+                    log::info!("Permanent password accepted via logon-screen fallback");
+                }
+            };
+            // Since hashed storage uses a prefix-based encoding, a hard plaintext that
+            // happens to look like hashed storage could be mis-detected. Validate local storage
+            // and hard/preset plaintext via separate paths to avoid that ambiguity.
+            let (local_storage, _) = Config::get_local_permanent_password_storage_and_salt();
+            if !local_storage.is_empty() {
+                if self.validate_password_storage(&local_storage) {
+                    print_fallback();
+                    return true;
+                }
+            } else {
+                let hard = config::HARD_SETTINGS
+                    .read()
+                    .unwrap()
+                    .get("password")
+                    .cloned()
+                    .unwrap_or_default();
+                if !hard.is_empty() && self.validate_password_plain(&hard) {
+                    print_fallback();
+                    return true;
+                }
             }
         }
         false
@@ -1942,7 +2082,7 @@ impl Connection {
         if let Some(session) = session {
             if !self.lr.password.is_empty()
                 && (tfa && session.tfa
-                    || !tfa && self.validate_one_password(session.random_password.clone()))
+                    || !tfa && self.validate_password_plain(&session.random_password))
             {
                 log::info!("is recent session");
                 return true;
@@ -2169,33 +2309,8 @@ impl Connection {
                         sleep(1.).await;
                         return false;
                     }
-                    let mut is_rdp = false;
-                    if pf.host == "RDP" && pf.port == 0 {
-                        pf.host = "localhost".to_owned();
-                        pf.port = 3389;
-                        is_rdp = true;
-                    }
-                    if pf.host.is_empty() {
-                        pf.host = "localhost".to_owned();
-                    }
-                    let mut addr = format!("{}:{}", pf.host, pf.port);
-                    self.port_forward_address = addr.clone();
-                    match timeout(3000, TcpStream::connect(&addr)).await {
-                        Ok(Ok(sock)) => {
-                            self.port_forward_socket = Some(Framed::new(sock, BytesCodec::new()));
-                        }
-                        _ => {
-                            if is_rdp {
-                                addr = "RDP".to_owned();
-                            }
-                            self.send_login_error(format!(
-                                "Failed to access remote {}, please make sure if it is open",
-                                addr
-                            ))
-                            .await;
-                            return false;
-                        }
-                    }
+                    let (addr, _is_rdp) = Self::normalize_port_forward_target(&mut pf);
+                    self.port_forward_address = addr;
                 }
                 _ => {
                     if !self.check_privacy_mode_on().await {
@@ -2223,11 +2338,10 @@ impl Connection {
 
             // https://github.com/rustdesk/rustdesk-server-pro/discussions/646
             // `is_logon` is used to check login with `OPTION_ALLOW_LOGON_SCREEN_PASSWORD` == "Y".
-            // `is_logon_ui()` is used on Windows, because there's no good way to detect `is_locked()`.
-            // Detecting `is_logon_ui()` (if `LogonUI.exe` running) is a workaround.
+            // `is_logon_ui()` is a fallback for logon UI detection on Windows.
             #[cfg(target_os = "windows")]
             let is_logon = || {
-                crate::platform::is_prelogin() || {
+                crate::platform::is_prelogin() || crate::platform::is_locked() || {
                     match crate::platform::is_logon_ui() {
                         Ok(result) => result,
                         Err(e) => {
@@ -2242,6 +2356,10 @@ impl Connection {
             #[cfg(any(target_os = "android", target_os = "ios"))]
             let is_logon = || crate::platform::is_prelogin();
 
+            let allow_logon_screen_password =
+                crate::get_builtin_option(keys::OPTION_ALLOW_LOGON_SCREEN_PASSWORD) == "Y"
+                    && is_logon();
+
             if !hbb_common::is_ip_str(&lr.username)
                 && !hbb_common::is_domain_port_str(&lr.username)
                 && lr.username != Config::get_id()
@@ -2250,8 +2368,7 @@ impl Connection {
                     .await;
                 return false;
             } else if (password::approve_mode() == ApproveMode::Click
-                && !(crate::get_builtin_option(keys::OPTION_ALLOW_LOGON_SCREEN_PASSWORD) == "Y"
-                    && is_logon()))
+                && !allow_logon_screen_password)
                 || password::approve_mode() == ApproveMode::Both && !password::has_valid_password()
             {
                 self.try_start_cm(lr.my_id, lr.my_name, false);
@@ -2266,7 +2383,9 @@ impl Connection {
                 if err_msg.is_empty() {
                     #[cfg(target_os = "linux")]
                     self.linux_headless_handle.wait_desktop_cm_ready().await;
-                    self.send_logon_response().await;
+                    if !self.send_logon_response_and_keep_alive().await {
+                        return false;
+                    }
                     self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), self.authorized);
                 } else {
                     self.send_login_error(err_msg).await;
@@ -2285,7 +2404,7 @@ impl Connection {
                 if !res {
                     return true;
                 }
-                if !self.validate_password() {
+                if !self.validate_password(allow_logon_screen_password) {
                     self.update_failure(failure, false, 0);
                     if err_msg.is_empty() {
                         self.send_login_error(crate::client::LOGIN_MSG_PASSWORD_WRONG)
@@ -2302,7 +2421,9 @@ impl Connection {
                     if err_msg.is_empty() {
                         #[cfg(target_os = "linux")]
                         self.linux_headless_handle.wait_desktop_cm_ready().await;
-                        self.send_logon_response().await;
+                        if !self.send_logon_response_and_keep_alive().await {
+                            return false;
+                        }
                         self.try_start_cm(lr.my_id, lr.my_name, self.authorized);
                     } else {
                         self.send_login_error(err_msg).await;
@@ -2320,7 +2441,9 @@ impl Connection {
                         self.update_failure(failure, true, 1);
                         self.require_2fa.take();
                         raii::AuthedConnID::set_session_2fa(self.session_key());
-                        self.send_logon_response().await;
+                        if !self.send_logon_response_and_keep_alive().await {
+                            return false;
+                        }
                         self.try_start_cm(
                             self.lr.my_id.to_owned(),
                             self.lr.my_name.to_owned(),
@@ -2371,7 +2494,9 @@ impl Connection {
                     if let Some((_instant, uuid_old)) = uuid_old {
                         if uuid == uuid_old {
                             self.from_switch = true;
-                            self.send_logon_response().await;
+                            if !self.send_logon_response_and_keep_alive().await {
+                                return false;
+                            }
                             self.try_start_cm(
                                 lr.my_id.clone(),
                                 lr.my_name.clone(),
@@ -5008,6 +5133,7 @@ impl FileRemoveLogControl {
 }
 
 fn start_wakelock_thread() -> std::sync::mpsc::Sender<(usize, usize)> {
+    // Check if we should keep awake during incoming sessions
     use crate::platform::{get_wakelock, WakeLock};
     let (tx, rx) = std::sync::mpsc::channel::<(usize, usize)>();
     std::thread::spawn(move || {
@@ -5016,9 +5142,15 @@ fn start_wakelock_thread() -> std::sync::mpsc::Sender<(usize, usize)> {
         loop {
             match rx.recv() {
                 Ok((conn_count, remote_count)) => {
-                    if conn_count == 0 {
-                        wakelock = None;
-                        log::info!("drop wakelock");
+                    let keep_awake = config::Config::get_bool_option(
+                        keys::OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS,
+                    );
+                    *WAKELOCK_KEEP_AWAKE_OPTION.lock().unwrap() = Some(keep_awake);
+                    if conn_count == 0 || !keep_awake {
+                        if wakelock.is_some() {
+                            wakelock = None;
+                            log::info!("drop wakelock");
+                        }
                     } else {
                         let mut display = remote_count > 0;
                         if let Some(_w) = wakelock.as_mut() {
@@ -5327,6 +5459,15 @@ mod raii {
                 .lock()
                 .unwrap()
                 .send((conn_count, remote_count)));
+        }
+
+        pub fn check_wake_lock_on_setting_changed() {
+            let current =
+                config::Config::get_bool_option(keys::OPTION_KEEP_AWAKE_DURING_INCOMING_SESSIONS);
+            let cached = *WAKELOCK_KEEP_AWAKE_OPTION.lock().unwrap();
+            if cached != Some(current) {
+                Self::check_wake_lock();
+            }
         }
 
         #[cfg(windows)]

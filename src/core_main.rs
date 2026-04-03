@@ -193,6 +193,7 @@ pub fn core_main() -> Option<Vec<String>> {
 
         #[cfg(windows)]
         {
+            crate::platform::try_remove_temp_update_files();
             hbb_common::config::PeerConfig::preload_peers();
             // 仅当程序已正式安装时，才尝试启动服务
             // 未安装时不自动安装服务（便携模式/开发模式）
@@ -217,17 +218,24 @@ pub fn core_main() -> Option<Vec<String>> {
                 if config::is_disable_installation() {
                     return None;
                 }
-                let res = platform::update_me(false);
-                let text = match res {
-                    Ok(_) => translate("Update successfully!".to_string()),
-                    Err(err) => {
-                        log::error!("Failed with error: {err}");
-                        translate("Update failed!".to_string())
+
+                let text = match crate::platform::prepare_custom_client_update() {
+                    Err(e) => {
+                        log::error!("Error preparing custom client update: {}", e);
+                        "Update failed!".to_string()
                     }
+                    Ok(false) => "Update failed!".to_string(),
+                    Ok(true) => match platform::update_me(false) {
+                        Ok(_) => "Updated successfully!".to_string(),
+                        Err(err) => {
+                            log::error!("Failed with error: {err}");
+                            "Update failed!".to_string()
+                        }
+                    },
                 };
                 Toast::new(Toast::POWERSHELL_APP_ID)
                     .title(&config::APP_NAME.read().unwrap())
-                    .text1(&text)
+                    .text1(&translate(text))
                     .sound(Some(Sound::Default))
                     .duration(Duration::Short)
                     .show()
@@ -340,8 +348,8 @@ pub fn core_main() -> Option<Vec<String>> {
                     log::info!("Starting update process...");
                     let _text = match platform::update_me() {
                         Ok(_) => {
-                            println!("{}", translate("Update successfully!".to_string()));
-                            log::info!("Update successfully!");
+                            println!("{}", translate("Updated successfully!".to_string()));
+                            log::info!("Updated successfully!");
                         }
                         Err(err) => {
                             eprintln!("Update failed with error: {}", err);

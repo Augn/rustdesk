@@ -1103,6 +1103,10 @@ pub fn main_get_api_server() -> String {
     get_api_server()
 }
 
+pub fn main_resolve_avatar_url(avatar: String) -> SyncReturn<String> {
+    SyncReturn(resolve_avatar_url(avatar))
+}
+
 pub fn main_http_request(url: String, method: String, body: Option<String>, header: String) {
     http_request(url, method, body, header)
 }
@@ -1691,8 +1695,8 @@ pub fn main_get_temporary_password() -> String {
     ui_interface::temporary_password()
 }
 
-pub fn main_get_permanent_password() -> String {
-    ui_interface::permanent_password()
+pub fn main_set_permanent_password_with_result(password: String) -> bool {
+    ui_interface::set_permanent_password_with_result(password)
 }
 
 pub fn main_get_fingerprint() -> String {
@@ -2070,10 +2074,6 @@ pub fn main_update_temporary_password() {
     update_temporary_password();
 }
 
-pub fn main_set_permanent_password(password: String) {
-    set_permanent_password(password);
-}
-
 pub fn main_check_super_user_permission() -> bool {
     check_super_user_permission()
 }
@@ -2421,16 +2421,23 @@ pub fn is_disable_installation() -> SyncReturn<bool> {
 }
 
 pub fn is_preset_password() -> bool {
-    config::HARD_SETTINGS
+    let hard = config::HARD_SETTINGS
         .read()
         .unwrap()
         .get("password")
-        .map_or(false, |p| {
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            return p == &crate::ipc::get_permanent_password();
-            #[cfg(any(target_os = "android", target_os = "ios"))]
-            return p == &config::Config::get_permanent_password();
-        })
+        .cloned()
+        .unwrap_or_default();
+    if hard.is_empty() {
+        return false;
+    }
+
+    // On desktop, service owns the authoritative config; query it via IPC and return only a boolean.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    return crate::ipc::is_permanent_password_preset();
+
+    // On mobile, we have no service IPC; verify against local storage.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return config::Config::matches_permanent_password_plain(&hard);
 }
 
 // Don't call this function for desktop version.
@@ -2761,6 +2768,15 @@ pub fn main_get_common(key: String) -> String {
             None => "",
         }
         .to_string();
+    } else if key == "has-gnome-shortcuts-inhibitor-permission" {
+        #[cfg(target_os = "linux")]
+        return crate::platform::linux::has_gnome_shortcuts_inhibitor_permission().to_string();
+        #[cfg(not(target_os = "linux"))]
+        return false.to_string();
+    } else if key == "permanent-password-set" {
+        return ui_interface::is_permanent_password_set().to_string();
+    } else if key == "local-permanent-password-set" {
+        return ui_interface::is_local_permanent_password_set().to_string();
     } else {
         if key.starts_with("download-data-") {
             let id = key.replace("download-data-", "");
@@ -2773,10 +2789,13 @@ pub fn main_get_common(key: String) -> String {
         } else if key.starts_with("download-file-") {
             let _version = key.replace("download-file-", "");
             #[cfg(target_os = "windows")]
-            return match crate::platform::windows::is_msi_installed() {
-                Ok(true) => format!("rustdesk-{_version}-x86_64.msi"),
-                Ok(false) => format!("rustdesk-{_version}-x86_64.exe"),
-                Err(e) => {
+            return match (
+                crate::platform::windows::is_msi_installed(),
+                crate::common::is_custom_client(),
+            ) {
+                (Ok(true), false) => format!("rustdesk-{_version}-x86_64.msi"),
+                (Ok(true), true) | (Ok(false), _) => format!("rustdesk-{_version}-x86_64.exe"),
+                (Err(e), _) => {
                     log::error!("Failed to check if is msi: {}", e);
                     format!("error:update-failed-check-msi-tip")
                 }
@@ -2873,30 +2892,17 @@ pub fn main_set_common(_key: String, _value: String) {
                 if let Some(f) = new_version_file.to_str() {
                     // 1.4.0 does not support "--update"
                     // But we can assume that the new version supports it.
-                    #[cfg(target_os = "windows")]
-                    if f.ends_with(".exe") {
-                        if let Err(e) =
-                            crate::platform::run_exe_in_cur_session(f, vec!["--update"], false)
-                        {
-                            log::error!("Failed to run the update exe: {}", e);
-                        }
-                    } else if f.ends_with(".msi") {
-                        if let Err(e) = crate::platform::update_me_msi(f, false) {
-                            log::error!("Failed to run the update msi: {}", e);
-                        }
-                    } else {
-                        // unreachable!()
-                    }
-                    #[cfg(target_os = "macos")]
+
+                    #[cfg(any(target_os = "windows", target_os = "macos"))]
                     match crate::platform::update_to(f) {
                         Ok(_) => {
-                            log::info!("Update successfully!");
+                            log::info!("Update process is launched successfully!");
                         }
                         Err(e) => {
                             log::error!("Failed to update to new version, {}", e);
+                            fs::remove_file(f).ok();
                         }
                     }
-                    fs::remove_file(f).ok();
                 }
             }
         } else if _key == "extract-update-dmg" {
@@ -2921,6 +2927,29 @@ pub fn main_set_common(_key: String, _value: String) {
         crate::hbbs_http::downloader::remove(&_value);
     } else if _key == "cancel-downloader" {
         crate::hbbs_http::downloader::cancel(&_value);
+    }
+
+    #[cfg(target_os = "linux")]
+    if _key == "clear-gnome-shortcuts-inhibitor-permission" {
+        std::thread::spawn(move || {
+            let (success, msg) =
+                match crate::platform::linux::clear_gnome_shortcuts_inhibitor_permission() {
+                    Ok(_) => (true, "".to_owned()),
+                    Err(e) => (false, e.to_string()),
+                };
+            let data = HashMap::from([
+                (
+                    "name",
+                    serde_json::json!("clear-gnome-shortcuts-inhibitor-permission-res"),
+                ),
+                ("success", serde_json::json!(success)),
+                ("msg", serde_json::json!(msg)),
+            ]);
+            let _res = flutter::push_global_event(
+                flutter::APP_TYPE_MAIN,
+                serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
+            );
+        });
     }
 }
 
@@ -3023,6 +3052,22 @@ pub mod server_side {
         let res = if let Ok(key) = env.get_string(&key) {
             let key: String = key.into();
             super::get_local_option(key)
+        } else {
+            "".into()
+        };
+        return env.new_string(res).unwrap_or_default().into_raw();
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_getBuildinOption(
+        env: JNIEnv,
+        _class: JClass,
+        key: JString,
+    ) -> jstring {
+        let mut env = env;
+        let res = if let Ok(key) = env.get_string(&key) {
+            let key: String = key.into();
+            super::get_builtin_option(&key)
         } else {
             "".into()
         };

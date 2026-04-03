@@ -120,6 +120,7 @@ class FfiModel with ChangeNotifier {
   late VirtualMouseMode virtualMouseMode;
   Timer? _timer;
   var _reconnects = 1;
+  DateTime? _offlineReconnectStartTime;
   bool _viewOnly = false;
   bool _showMyCursor = false;
   WeakReference<FFI> parent;
@@ -783,7 +784,8 @@ class FfiModel with ChangeNotifier {
     }
   }
 
-  Future<void> updateCurDisplay(SessionID sessionId, {updateCursorPos = false}) async {
+  Future<void> updateCurDisplay(SessionID sessionId,
+      {updateCursorPos = false}) async {
     final newRect = displaysRect();
     if (newRect == null) {
       return;
@@ -939,9 +941,44 @@ class FfiModel with ChangeNotifier {
       showPrivacyFailedDialog(
           sessionId, type, title, text, link, hasRetry, dialogManager);
     } else {
-      final hasRetry = evt['hasRetry'] == 'true';
+      var hasRetry = evt['hasRetry'] == 'true';
+      if (!hasRetry) {
+        hasRetry = shouldAutoRetryOnOffline(type, title, text);
+      }
       showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
     }
+  }
+
+  /// Auto-retry check for "Remote desktop is offline" error.
+  /// returns true to auto-retry, false otherwise.
+  bool shouldAutoRetryOnOffline(
+    String type,
+    String title,
+    String text,
+  ) {
+    if (type == 'error' &&
+        title == 'Connection Error' &&
+        text == 'Remote desktop is offline' &&
+        _pi.isSet.isTrue) {
+      // Auto retry for ~30s (server's peer offline threshold) when controlled peer's account changes
+      // (e.g., signout, switch user, login into OS) causes temporary offline via websocket/tcp connection.
+      // The actual wait may exceed 30s (e.g., 20s elapsed + 16s next retry = 36s), which is acceptable
+      // since the controlled side reconnects quickly after account changes.
+      // Uses time-based check instead of _reconnects count because user can manually retry.
+      // https://github.com/rustdesk/rustdesk/discussions/14048
+      if (_offlineReconnectStartTime == null) {
+        // First offline, record time and start retry
+        _offlineReconnectStartTime = DateTime.now();
+        return true;
+      } else {
+        final elapsed =
+            DateTime.now().difference(_offlineReconnectStartTime!).inSeconds;
+        if (elapsed < 30) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   handleToast(Map<String, dynamic> evt, SessionID sessionId, String peerId) {
@@ -979,19 +1016,31 @@ class FfiModel with ChangeNotifier {
   showMsgBox(SessionID sessionId, String type, String title, String text,
       String link, bool hasRetry, OverlayDialogManager dialogManager,
       {bool? hasCancel}) async {
-    final showNoteEdit = parent.target != null &&
+    final noteAllowed = parent.target != null &&
         allowAskForNoteAtEndOfConnection(parent.target, false) &&
-        (title == "Connection Error" || type == "restarting") &&
-        !hasRetry;
+        (title == "Connection Error" || type == "restarting");
+    final showNoteEdit = noteAllowed && !hasRetry;
     if (showNoteEdit) {
       await showConnEndAuditDialogCloseCanceled(
           ffi: parent.target!, type: type, title: title, text: text);
       closeConnection();
     } else {
+      VoidCallback? onSubmit;
+      if (noteAllowed && hasRetry) {
+        final ffi = parent.target!;
+        onSubmit = () async {
+          _timer?.cancel();
+          _timer = null;
+          await showConnEndAuditDialogCloseCanceled(
+              ffi: ffi, type: type, title: title, text: text);
+          closeConnection();
+        };
+      }
       msgBox(sessionId, type, title, text, link, dialogManager,
           hasCancel: hasCancel,
           reconnect: hasRetry ? reconnect : null,
-          reconnectTimeout: hasRetry ? _reconnects : null);
+          reconnectTimeout: hasRetry ? _reconnects : null,
+          onSubmit: onSubmit);
     }
     _timer?.cancel();
     if (hasRetry) {
@@ -1001,6 +1050,7 @@ class FfiModel with ChangeNotifier {
       _reconnects *= 2;
     } else {
       _reconnects = 1;
+      _offlineReconnectStartTime = null;
     }
   }
 
@@ -1323,6 +1373,7 @@ class FfiModel with ChangeNotifier {
       }
       if (displays.isNotEmpty) {
         _reconnects = 1;
+        _offlineReconnectStartTime = null;
         waitForFirstImage.value = true;
         isRefreshing = false;
       }
@@ -2113,6 +2164,9 @@ class CanvasModel with ChangeNotifier {
   ViewStyle _lastViewStyle = ViewStyle.defaultViewStyle();
 
   Timer? _timerMobileFocusCanvasCursor;
+  Timer? _timerMobileRestoreCanvasOffset;
+  Offset? _offsetBeforeMobileSoftKeyboard;
+  double? _scaleBeforeMobileSoftKeyboard;
 
   // `isMobileCanvasChanged` is used to avoid canvas reset when changing the input method
   // after showing the soft keyboard.
@@ -2176,10 +2230,32 @@ class CanvasModel with ChangeNotifier {
     double w = size.width - leftToEdge - rightToEdge;
     double h = size.height - topToEdge - bottomToEdge;
     if (isMobile) {
+      // Account for horizontal safe area insets on both orientations.
+      w = w - mediaData.padding.left - mediaData.padding.right;
+      // Vertically, subtract the bottom keyboard inset (viewInsets.bottom) and any
+      // bottom overlay (e.g. key-help tools) so the canvas is not covered.
       h = h -
           mediaData.viewInsets.bottom -
           (parent.target?.cursorModel.keyHelpToolsRectToAdjustCanvas?.bottom ??
               0);
+      // Orientation-specific handling:
+      //  - Portrait: additionally subtract top padding (e.g. status bar / notch)
+      //  - Landscape: does not subtract mediaData.padding.top/bottom (home indicator auto-hides)
+      final isPortrait = size.height > size.width;
+      if (isPortrait) {
+        // In portrait mode, subtract the top safe-area padding (e.g. status bar / notch)
+        // so the remote image is not truncated, while keeping the bottom inset to avoid
+        // introducing unnecessary blank space around the canvas.
+        //
+        // iOS -> Android, portrait, adjust mode:
+        // h = h (no padding subtracted): top and bottom are truncated
+        //   https://github.com/user-attachments/assets/30ed4559-c27e-432b-847f-8fec23c9f998
+        // h = h - top - bottom: extra blank spaces appear
+        //   https://github.com/user-attachments/assets/12a98817-3b4e-43aa-be0f-4b03cf364b7e
+        // h = h - top (current): works fine
+        //   https://github.com/user-attachments/assets/95f047f2-7f47-4a36-8113-5023989a0c81
+        h = h - mediaData.padding.top;
+      }
     }
     return Size(w < 0 ? 0 : w, h < 0 ? 0 : h);
   }
@@ -2578,6 +2654,9 @@ class CanvasModel with ChangeNotifier {
     _scale = 1.0;
     _lastViewStyle = ViewStyle.defaultViewStyle();
     _timerMobileFocusCanvasCursor?.cancel();
+    _timerMobileRestoreCanvasOffset?.cancel();
+    _offsetBeforeMobileSoftKeyboard = null;
+    _scaleBeforeMobileSoftKeyboard = null;
   }
 
   updateScrollPercent() {
@@ -2602,6 +2681,31 @@ class CanvasModel with ChangeNotifier {
         Timer(Duration(milliseconds: 100), () async {
       updateSize();
       _resetCanvasOffset(getDisplayWidth(), getDisplayHeight());
+      notifyListeners();
+    });
+  }
+
+  void saveMobileOffsetBeforeSoftKeyboard() {
+    _timerMobileRestoreCanvasOffset?.cancel();
+    _offsetBeforeMobileSoftKeyboard = Offset(_x, _y);
+    _scaleBeforeMobileSoftKeyboard = _scale;
+  }
+
+  void restoreMobileOffsetAfterSoftKeyboard() {
+    _timerMobileRestoreCanvasOffset?.cancel();
+    _timerMobileFocusCanvasCursor?.cancel();
+    final targetOffset = _offsetBeforeMobileSoftKeyboard;
+    final targetScale = _scaleBeforeMobileSoftKeyboard;
+    if (targetOffset == null || targetScale == null) {
+      return;
+    }
+    _timerMobileRestoreCanvasOffset = Timer(Duration(milliseconds: 100), () {
+      updateSize();
+      _x = targetOffset.dx;
+      _y = targetOffset.dy;
+      _scale = targetScale;
+      _offsetBeforeMobileSoftKeyboard = null;
+      _scaleBeforeMobileSoftKeyboard = null;
       notifyListeners();
     });
   }
@@ -2858,8 +2962,13 @@ class CursorModel with ChangeNotifier {
       _lastIsBlocked = true;
     }
     if (isMobile && _lastKeyboardIsVisible != keyboardIsVisible) {
-      parent.target?.canvasModel.mobileFocusCanvasCursor();
-      parent.target?.canvasModel.isMobileCanvasChanged = false;
+      if (keyboardIsVisible) {
+        parent.target?.canvasModel.saveMobileOffsetBeforeSoftKeyboard();
+        parent.target?.canvasModel.mobileFocusCanvasCursor();
+        parent.target?.canvasModel.isMobileCanvasChanged = false;
+      } else {
+        parent.target?.canvasModel.restoreMobileOffsetAfterSoftKeyboard();
+      }
     }
     _lastKeyboardIsVisible = keyboardIsVisible;
   }
