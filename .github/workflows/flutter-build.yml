@@ -537,6 +537,29 @@ jobs:
           flutter build ipa --release --no-codesign
           popd
 
+      - name: Package unsigned IPA for sideloading
+        shell: bash
+        run: |
+          set -ex
+          APP_DIR=""
+          for cand in \
+            flutter/build/ios/iphoneos/Runner.app \
+            flutter/build/ios/Release-iphoneos/Runner.app \
+            flutter/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app; do
+            if [ -d "$cand" ]; then APP_DIR="$cand"; break; fi
+          done
+          if [ -z "$APP_DIR" ]; then
+            echo "Runner.app not found"; find flutter/build/ios -maxdepth 4 -name 'Runner.app' -print; exit 1
+          fi
+          OUT_DIR="flutter/build/ios/ipa"
+          mkdir -p "$OUT_DIR"
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP_DIR" "$STAGE/Payload/"
+          IPA_NAME="omendesk-${{ env.VERSION }}-${{ matrix.job.arch }}-ios-unsigned.ipa"
+          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/$OUT_DIR/$IPA_NAME" Payload)
+          ls -lh "$OUT_DIR"
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@master
         with:
