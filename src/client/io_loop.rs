@@ -1427,6 +1427,8 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
                 Some(message::Union::Clipboard(cb)) => {
                     if !self.handler.lc.read().unwrap().disable_clipboard.v {
+                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
+                        let cb_to_forward = cb.clone();
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(vec![cb], ClipboardSide::Client);
                         #[cfg(target_os = "ios")]
@@ -1442,10 +1444,23 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         #[cfg(target_os = "android")]
                         crate::clipboard::handle_msg_clipboard(cb);
+                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
+                        {
+                            let mut msg_out = Message::new();
+                            msg_out.set_clipboard(cb_to_forward);
+                            let source_peer_id = self.handler.get_id();
+                            crate::flutter::send_clipboard_msg_to_other_sessions(
+                                msg_out,
+                                false,
+                                &source_peer_id,
+                            );
+                        }
                     }
                 }
                 Some(message::Union::MultiClipboards(_mcb)) => {
                     if !self.handler.lc.read().unwrap().disable_clipboard.v {
+                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
+                        let mcb_to_forward = _mcb.clone();
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(_mcb.clipboards, ClipboardSide::Client);
                         #[cfg(target_os = "ios")]
@@ -1467,6 +1482,17 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         #[cfg(target_os = "android")]
                         crate::clipboard::handle_msg_multi_clipboards(_mcb);
+                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
+                        {
+                            let mut msg_out = Message::new();
+                            msg_out.set_multi_clipboards(mcb_to_forward);
+                            let source_peer_id = self.handler.get_id();
+                            crate::flutter::send_clipboard_msg_to_other_sessions(
+                                msg_out,
+                                false,
+                                &source_peer_id,
+                            );
+                        }
                     }
                 }
                 #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]

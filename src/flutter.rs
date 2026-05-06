@@ -1449,7 +1449,22 @@ pub fn update_file_clipboard_required() {
 
 #[cfg(not(target_os = "ios"))]
 pub fn send_clipboard_msg(msg: Message, _is_file: bool) {
+    send_clipboard_msg_(msg, _is_file, None);
+}
+
+#[cfg(not(target_os = "ios"))]
+pub fn send_clipboard_msg_to_other_sessions(msg: Message, _is_file: bool, source_peer_id: &str) {
+    send_clipboard_msg_(msg, _is_file, Some(source_peer_id));
+}
+
+#[cfg(not(target_os = "ios"))]
+fn send_clipboard_msg_(msg: Message, _is_file: bool, source_peer_id: Option<&str>) {
     for s in sessions::get_sessions() {
+        if let Some(source_peer_id) = source_peer_id {
+            if s.get_id() == source_peer_id {
+                continue;
+            }
+        }
         #[cfg(feature = "unix-file-copy-paste")]
         if _is_file {
             if crate::is_support_file_copy_paste_num(s.lc.read().unwrap().version)
