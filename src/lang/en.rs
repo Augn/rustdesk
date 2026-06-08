@@ -219,8 +219,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("ab_web_console_tip", "More on web console"),
         ("allow-only-conn-window-open-tip", "Only allow connection if omendesk window is open"),
         ("no_need_privacy_mode_no_physical_displays_tip", "No physical displays, no need to use the privacy mode."),
-        ("Follow remote cursor", ""),
-        ("Follow remote window focus", ""),
         ("default_proxy_tip", "Default protocol and port are Socks5 and 1080"),
         ("no_audio_input_device_tip", "No audio input device found."),
         ("clear_Wayland_screen_selection_tip", "After clearing the screen selection, you can reselect the screen to share."),
@@ -275,5 +273,13 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("keep-awake-during-incoming-sessions-label", "Keep screen awake during incoming sessions"),
         ("password-hidden-tip", "Permanent password is set (hidden)."),
         ("preset-password-in-use-tip", "Preset password is currently in use."),
+        ("allow-remote-toolbar-docking-any-edge", "Allow docking remote toolbar to any window edge"),
+        ("server_requires_deployment_tip", "The server requires this device to be deployed explicitly. Deploy now?"),
+        ("wayland-keyboard-input-disabled-tip", "Allow keyboard input?"),
+        ("wayland-keyboard-input-consent-tip", "What you type on this remote computer (including passwords) could be read by other apps on it."),
+        ("wayland-keyboard-input-applies-to-tip", "This choice applies to:"),
+        ("wayland-soft-keyboard-input-label", "Soft keyboard input"),
+        ("wayland-keyboard-input-reset-choice-tip", "Reset keyboard input choice"),
+        ("remember-wayland-keyboard-choice-tip", "Don't ask again for this remote computer"),
     ].iter().cloned().collect();
 }
