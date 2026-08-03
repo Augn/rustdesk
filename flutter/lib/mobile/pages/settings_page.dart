@@ -78,6 +78,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableAbr = false;
   var _denyLANDiscovery = false;
   var _onlyWhiteList = false;
+  var _onlyIdWhiteList = false;
   var _enableDirectIPAccess = false;
   var _enableRecordSession = false;
   var _enableHardwareCodec = false;
@@ -89,6 +90,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _directAccessPort = "";
   var _fingerprint = "";
   var _buildDate = "";
+  var _myId = "";
   var _autoDisconnectTimeout = "";
   var _hideServer = false;
   var _hideProxy = false;
@@ -109,6 +111,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     _denyLANDiscovery = !option2bool(kOptionEnableLanDiscovery,
         bind.mainGetOptionSync(key: kOptionEnableLanDiscovery));
     _onlyWhiteList = whitelistNotEmpty();
+    _onlyIdWhiteList = idWhitelistNotEmpty();
     _enableDirectIPAccess = option2bool(
         kOptionDirectServer, bind.mainGetOptionSync(key: kOptionDirectServer));
     _enableRecordSession = option2bool(kOptionEnableRecordSession,
@@ -215,6 +218,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       if (_buildDate != buildDate) {
         update = true;
         _buildDate = buildDate;
+      }
+
+      final myId = await bind.mainGetMyId();
+      if (_myId != myId) {
+        update = true;
+        _myId = myId;
       }
 
       final isUsingPublicServer = await bind.mainIsUsingPublicServer();
@@ -401,6 +410,29 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         },
       ),
       SettingsTile.switchTile(
+        title: Row(children: [
+          Expanded(child: Text(translate('Use ID whitelisting'))),
+          Offstage(
+                  offstage: !_onlyIdWhiteList,
+                  child: const Icon(Icons.warning_amber_rounded,
+                      color: Color.fromARGB(255, 255, 204, 0)))
+              .marginOnly(left: 5)
+        ]),
+        initialValue: _onlyIdWhiteList,
+        onToggle: (_) async {
+          update() async {
+            final onlyIdWhiteList = idWhitelistNotEmpty();
+            if (onlyIdWhiteList != _onlyIdWhiteList) {
+              setState(() {
+                _onlyIdWhiteList = onlyIdWhiteList;
+              });
+            }
+          }
+
+          changeIdWhiteList(callback: update);
+        },
+      ),
+      SettingsTile.switchTile(
         title: Text(translate('Adaptive bitrate')),
         initialValue: _enableAbr,
         onToggle: isOptionFixed(kOptionEnableAbr)
@@ -530,7 +562,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(translate('Keep omendesk background service')),
+                    Text(translate('Keep RustDesk background service')),
                     Text('* ${translate('Ignore Battery Optimizations')}',
                         style: Theme.of(context).textTheme.bodySmall),
                   ]),
@@ -955,13 +987,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           tiles: [
             SettingsTile(
                 onPressed: (context) async {
-                  const url = 'https://omenew-art.com';
                   await launchUrl(Uri.parse(url));
                 },
                 title: Text(translate("Version: ") + version),
                 value: Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('omenew-art.com',
+                  child: Text('rustdesk.com',
                       style: TextStyle(
                         decoration: TextDecoration.underline,
                       )),
@@ -984,18 +1015,26 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                   ),
                   leading: Icon(Icons.fingerprint)),
             SettingsTile(
+                onPressed: (context) => onCopyId(_myId),
+                title: Text(translate("ID")),
+                value: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(_myId),
+                ),
+                leading: Icon(Icons.perm_identity)),
+            SettingsTile(
               title: Text('版权信息'),
               value: Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Omen版权所有', style: TextStyle(fontSize: 13)),
-                    Text('Umean提供技术支持', style: TextStyle(fontSize: 13)),
-                    Text('Hugh开发', style: TextStyle(fontSize: 13)),
+                    Text('Omen 版权所有', style: TextStyle(fontSize: 13)),
+                    Text('Umean 提供技术支持', style: TextStyle(fontSize: 13)),
+                    Text('Hugh 开发', style: TextStyle(fontSize: 13)),
                     SizedBox(height: 8),
                     Text(
-                      '注意：未经允许传播或者在其他渠道下载到此版本，Omen有权追究其责任',
+                      '注意：未经允许传播或者在其他渠道下载到此版本，Omen 有权追究其责任。',
                       style: TextStyle(fontSize: 11, color: Colors.red),
                     ),
                   ],
@@ -1108,35 +1147,21 @@ void showThemeSettings(OverlayDialogManager dialogManager) async {
 void showAbout(OverlayDialogManager dialogManager) {
   dialogManager.show((setState, close, context) {
     return CustomAlertDialog(
-      title: Text('关于'),
+      title: Text(translate('About RustDesk')),
       content: Wrap(direction: Axis.vertical, spacing: 12, children: [
         Text('Version: $version'),
         InkWell(
             onTap: () async {
-              const url = 'https://omenew-art.com';
+              const url = 'https://rustdesk.com/';
               await launchUrl(Uri.parse(url));
             },
             child: Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('omenew-art.com',
+              child: Text('rustdesk.com',
                   style: TextStyle(
                     decoration: TextDecoration.underline,
                   )),
             )),
-        SizedBox(height: 8),
-        Text(
-          'Omen版权所有\nUmean提供技术支持\nHugh开发',
-          style: TextStyle(fontSize: 13),
-        ),
-        SizedBox(height: 8),
-        Text(
-          '注意：未经允许传播或者在其他渠道下载到此版本，Omen有权追究其责任',
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.red,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
       ]),
       actions: [],
     );

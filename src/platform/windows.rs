@@ -3303,6 +3303,9 @@ pub fn update_me(debug: bool) -> ResultType<()> {
         .ok_or(anyhow!("Can't get file name of {exe}"))?
         .to_string_lossy()
         .to_string();
+    // These PID queries can return no results when command lines are not
+    // accessible (for example across elevation or process architectures).
+    // The image-name taskkill below remains the reliable update fallback.
     let main_window_pids =
         crate::platform::get_pids_of_process_with_args::<_, &str>(&app_exe_name, &[]);
     let main_window_sessions = main_window_pids
