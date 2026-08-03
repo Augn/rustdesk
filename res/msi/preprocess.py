@@ -27,15 +27,15 @@ g_arpsystemcomponent = {
     },
     "Contact": {
         "msi": "ARPCONTACT",
-        "v": "https://github.com/rustdesk/rustdesk",
+        "v": "https://github.com/Augn/rustdesk",
     },
     "HelpLink": {
         "msi": "ARPHELPLINK",
-        "v": "https://github.com/rustdesk/rustdesk/issues/",
+        "v": "https://github.com/Augn/rustdesk/issues/",
     },
     "ReadMe": {
         "msi": "ARPREADME",
-        "v": "https://github.com/rustdesk/rustdesk",
+        "v": "https://github.com/Augn/rustdesk",
     },
 }
 
@@ -76,7 +76,25 @@ def make_parser():
         "--app-name", type=str, default="RustDesk", help="The app name."
     )
     parser.add_argument(
+        "--exe-name",
+        type=str,
+        default="",
+        help="The executable name without .exe. Defaults to --app-name.",
+    )
+    parser.add_argument(
+        "--preserve-component-guids",
+        action="store_true",
+        help="Keep the checked-in component GUIDs for repeatable product upgrades.",
+        default=False,
+    )
+    parser.add_argument(
         "-v", "--version", type=str, default="", help="The app version."
+    )
+    parser.add_argument(
+        "--build-date",
+        type=str,
+        default="",
+        help="Build date in YYYY-MM-DD HH:MM format. Read from the executable when omitted.",
     )
     parser.add_argument(
         "--revision-version", type=int, default=default_revision_version(), help="The revision version."
@@ -111,13 +129,13 @@ def read_lines_and_start_index(file_path, tag_start, tag_end):
     return lines, index_start
 
 
-def insert_components_between_tags(lines, index_start, app_name, dist_dir):
+def insert_components_between_tags(lines, index_start, exe_name, dist_dir):
     indent = g_indent_unit * 3
     path = Path(dist_dir)
     idx = 1
     for file_path in path.glob("**/*"):
         if file_path.is_file():
-            if file_path.name.lower() == f"{app_name}.exe".lower():
+            if file_path.name.lower() == f"{exe_name}.exe".lower():
                 continue
 
             subdir = str(file_path.parent.relative_to(path))
@@ -139,26 +157,29 @@ def insert_components_between_tags(lines, index_start, app_name, dist_dir):
     return True
 
 
-def gen_auto_component(app_name, dist_dir):
+def gen_auto_component(exe_name, dist_dir):
     return gen_content_between_tags(
         "Package/Components/RustDesk.wxs",
         "<!--$AutoComonentStart$-->",
         "<!--$AutoComponentEnd$-->",
         lambda lines, index_start: insert_components_between_tags(
-            lines, index_start, app_name, dist_dir
+            lines, index_start, exe_name, dist_dir
         ),
     )
 
 
-def gen_pre_vars(args, dist_dir):
+def gen_pre_vars(args, dist_dir, exe_name):
     def func(lines, index_start):
-        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, app_name + ".exe")
+        # Keep the historical RustDesk upgrade family when the executable is still
+        # rustdesk.exe, so the branded MSI can replace older MSI installations.
+        upgrade_code = uuid.uuid5(uuid.NAMESPACE_OID, exe_name + ".exe")
 
         indent = g_indent_unit * 1
         to_insert_lines = [
             f'{indent}<?define Version="{g_version}" ?>\n',
             f'{indent}<?define Manufacturer="{args.manufacturer}" ?>\n',
             f'{indent}<?define Product="{args.app_name}" ?>\n',
+            f'{indent}<?define Executable="{exe_name}" ?>\n',
             f'{indent}<?define Description="{args.app_name} Installer" ?>\n',
             f'{indent}<?define ProductLower="{args.app_name.lower()}" ?>\n',
             f'{indent}<?define RegKeyRoot=".$(var.ProductLower)" ?>\n',
@@ -302,7 +323,7 @@ def get_folder_size(folder_path):
     return total_size
 
 
-def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
+def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir, exe_name):
     def func(lines, index_start):
         indent = g_indent_unit * 5
 
@@ -314,7 +335,7 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
             f'{indent}<RegistryValue Type="string" Name="DisplayName" Value="{args.app_name}" />\n'
         )
         lines_new.append(
-            f'{indent}<RegistryValue Type="string" Name="DisplayIcon" Value="[INSTALLFOLDER_INNER]{args.app_name}.exe" />\n'
+            f'{indent}<RegistryValue Type="string" Name="DisplayIcon" Value="[INSTALLFOLDER_INNER]{exe_name}.exe" />\n'
         )
         lines_new.append(
             f'{indent}<RegistryValue Type="string" Name="DisplayVersion" Value="{g_version}" />\n'
@@ -393,7 +414,7 @@ def gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir):
     )
 
 
-def gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir):
+def gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir, exe_name):
     try:
         custom_arp = json.loads(args.custom_arp)
         g_arpsystemcomponent.update(custom_arp)
@@ -402,7 +423,7 @@ def gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir):
         return False
 
     if args.arp:
-        return gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir)
+        return gen_custom_ARPSYSTEMCOMPONENT_True(args, dist_dir, exe_name)
     else:
         return gen_custom_ARPSYSTEMCOMPONENT_False(args)
 
@@ -454,8 +475,8 @@ def prepare_resources():
         return False
 
 
-def init_global_vars(dist_dir, app_name, args):
-    dist_app = dist_dir.joinpath(app_name + ".exe")
+def init_global_vars(dist_dir, exe_name, args):
+    dist_app = dist_dir.joinpath(exe_name + ".exe")
 
     def read_process_output(args):
         process = subprocess.Popen(
@@ -482,7 +503,7 @@ def init_global_vars(dist_dir, app_name, args):
             raise ValueError(f"Invalid revision version: {args.revision_version}")    
         g_version = f"{g_version}.{args.revision_version}"
 
-    g_build_date = read_process_output("--build-date")
+    g_build_date = args.build_date or read_process_output("--build-date")
     build_date_pattern = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
     if not build_date_pattern.match(g_build_date):
         print(f"Error: build date {g_build_date} not found in {dist_app}")
@@ -525,32 +546,33 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     app_name = args.app_name
+    exe_name = args.exe_name or app_name
     dist_dir = Path(sys.argv[0]).parent.joinpath(args.dist_dir).resolve()
 
     if not prepare_resources():
         sys.exit(-1)
 
-    if not init_global_vars(dist_dir, app_name, args):
+    if not init_global_vars(dist_dir, exe_name, args):
         sys.exit(-1)
 
     update_license_file(app_name)
 
-    if not gen_pre_vars(args, dist_dir):
+    if not gen_pre_vars(args, dist_dir, exe_name):
         sys.exit(-1)
 
-    if app_name != "RustDesk":
+    if app_name != "RustDesk" and not args.preserve_component_guids:
         replace_component_guids_in_wxs()
 
     if not gen_upgrade_info():
         sys.exit(-1)
 
-    if not gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir):
+    if not gen_custom_ARPSYSTEMCOMPONENT(args, dist_dir, exe_name):
         sys.exit(-1)
 
     if not gen_conn_type(args):
         sys.exit(-1)
 
-    if not gen_auto_component(app_name, dist_dir):
+    if not gen_auto_component(exe_name, dist_dir):
         sys.exit(-1)
 
     if not gen_custom_dialog_bitmaps():

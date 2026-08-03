@@ -1461,19 +1461,28 @@ pub fn copy_exe_cmd(src_exe: &str, exe: &str, path: &str) -> ResultType<String> 
 }
 
 #[inline]
-pub fn rename_exe_cmd(src_exe: &str, path: &str) -> ResultType<String> {
+pub fn rename_exe_cmd(src_exe: &str, installed_exe: &str) -> ResultType<String> {
     let src_exe_filename = PathBuf::from(src_exe)
         .file_name()
         .ok_or(anyhow!("Can't get file name of {src_exe}"))?
         .to_string_lossy()
         .to_string();
-    let app_name = crate::get_app_name().to_lowercase();
-    if src_exe_filename.to_lowercase() == format!("{app_name}.exe") {
+    let installed_exe_path = PathBuf::from(installed_exe);
+    let installed_exe_filename = installed_exe_path
+        .file_name()
+        .ok_or(anyhow!("Can't get file name of {installed_exe}"))?
+        .to_string_lossy()
+        .to_string();
+    let installed_dir = installed_exe_path
+        .parent()
+        .ok_or(anyhow!("Can't get parent of {installed_exe}"))?
+        .to_string_lossy();
+    if src_exe_filename.eq_ignore_ascii_case(&installed_exe_filename) {
         Ok("".to_owned())
     } else {
         Ok(format!(
             "
-        move /Y \"{path}\\{src_exe_filename}\" \"{path}\\{app_name}.exe\"
+        move /Y \"{installed_dir}\\{src_exe_filename}\" \"{installed_exe}\"
         ",
         ))
     }
@@ -3289,7 +3298,11 @@ pub fn update_me(debug: bool) -> ResultType<()> {
         bail!("{} is not installed.", &app_name);
     }
 
-    let app_exe_name = &format!("{}.exe", &app_name);
+    let app_exe_name = PathBuf::from(&exe)
+        .file_name()
+        .ok_or(anyhow!("Can't get file name of {exe}"))?
+        .to_string_lossy()
+        .to_string();
     let main_window_pids =
         crate::platform::get_pids_of_process_with_args::<_, &str>(&app_exe_name, &[]);
     let main_window_sessions = main_window_pids
@@ -3426,7 +3439,7 @@ reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
         "
 chcp 65001
 sc stop {app_name}
-taskkill /F /IM {app_name}.exe{filter}
+taskkill /F /IM {app_exe_name}{filter}
 {reg_cmd}
 {copy_exe}
 {rename_exe}
@@ -3438,7 +3451,7 @@ taskkill /F /IM {app_name}.exe{filter}
     ",
         app_name = app_name,
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
-        rename_exe = rename_exe_cmd(&src_exe, &path)?,
+        rename_exe = rename_exe_cmd(&src_exe, &exe)?,
         remove_meta_toml = remove_meta_toml_cmd(is_msi.unwrap_or(true), &path),
         sleep = if debug { "timeout 300" } else { "" },
     );

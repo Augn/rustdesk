@@ -8,6 +8,28 @@
       		<RegistrySearch Id="InstallFolderSearch" Root="HKCR" Key="$(var.RegKeyRoot)" Name="INSTALLFOLDER" Type="raw" />
     	</Property>
 
+		<!-- Prefer the directory recorded by an existing EXE/MSI installation. -->
+		<Property Id="EXISTING_INSTALLFOLDER_CURRENT_64" Secure="yes">
+			<RegistrySearch Id="ExistingInstallFolderCurrent64Search" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\$(var.Product)" Name="InstallLocation" Type="raw" Bitness="always64" />
+		</Property>
+		<Property Id="EXISTING_INSTALLFOLDER_CURRENT_32" Secure="yes">
+			<RegistrySearch Id="ExistingInstallFolderCurrent32Search" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\$(var.Product)" Name="InstallLocation" Type="raw" Bitness="always32" />
+		</Property>
+		<Property Id="EXISTING_INSTALLFOLDER_INNO_64" Secure="yes">
+			<RegistrySearch Id="ExistingInstallFolderInno64Search" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" Name="InstallLocation" Type="raw" Bitness="always64" />
+		</Property>
+		<Property Id="EXISTING_INSTALLFOLDER_INNO_32" Secure="yes">
+			<RegistrySearch Id="ExistingInstallFolderInno32Search" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" Name="InstallLocation" Type="raw" Bitness="always32" />
+		</Property>
+		<!-- MSI files produced before the omendesk branding fix used the RustDesk product key. -->
+		<Property Id="EXISTING_INSTALLFOLDER_LEGACY_64" Secure="yes">
+			<RegistrySearch Id="ExistingInstallFolderLegacy64Search" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" Name="InstallLocation" Type="raw" Bitness="always64" />
+		</Property>
+		<Property Id="EXISTING_INSTALLFOLDER_LEGACY_32" Secure="yes">
+			<RegistrySearch Id="ExistingInstallFolderLegacy32Search" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" Name="InstallLocation" Type="raw" Bitness="always32" />
+		</Property>
+		<Property Id="DETECTED_INSTALLFOLDER" Secure="yes" />
+
 		<!-- If a property value has been passed via the command line (which includes when set from the bundle), the registry search will
 				 overwrite the command line value, these actions temporarily store the command line value before the registry search
 				 is performed so they can be restored after the registry search is complete -->
@@ -16,15 +38,25 @@
 		<!-- If a command line value was stored, restore it after the registry search has been performed -->
 		<SetProperty Action="RestoreSavedInstallFolderValue" Id="INSTALLFOLDER" Value="[SavedInstallFolderCmdLineValue]" After="AppSearch" Sequence="first" Condition="SavedInstallFolderCmdLineValue" />
 
+		<!-- Resolve an existing location in priority order and preserve it exactly. -->
+		<SetProperty Action="DetectInstallFolderCurrent64" Id="DETECTED_INSTALLFOLDER" Value="[EXISTING_INSTALLFOLDER_CURRENT_64]" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="EXISTING_INSTALLFOLDER_CURRENT_64" />
+		<SetProperty Action="DetectInstallFolderCurrent32" Id="DETECTED_INSTALLFOLDER" Value="[EXISTING_INSTALLFOLDER_CURRENT_32]" After="DetectInstallFolderCurrent64" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND EXISTING_INSTALLFOLDER_CURRENT_32" />
+		<SetProperty Action="DetectInstallFolderInno64" Id="DETECTED_INSTALLFOLDER" Value="[EXISTING_INSTALLFOLDER_INNO_64]" After="DetectInstallFolderCurrent32" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND EXISTING_INSTALLFOLDER_INNO_64" />
+		<SetProperty Action="DetectInstallFolderInno32" Id="DETECTED_INSTALLFOLDER" Value="[EXISTING_INSTALLFOLDER_INNO_32]" After="DetectInstallFolderInno64" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND EXISTING_INSTALLFOLDER_INNO_32" />
+		<SetProperty Action="DetectInstallFolderLegacy64" Id="DETECTED_INSTALLFOLDER" Value="[EXISTING_INSTALLFOLDER_LEGACY_64]" After="DetectInstallFolderInno32" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND EXISTING_INSTALLFOLDER_LEGACY_64" />
+		<SetProperty Action="DetectInstallFolderLegacy32" Id="DETECTED_INSTALLFOLDER" Value="[EXISTING_INSTALLFOLDER_LEGACY_32]" After="DetectInstallFolderLegacy64" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND EXISTING_INSTALLFOLDER_LEGACY_32" />
+		<SetProperty Action="UseDetectedInstallFolder" Id="INSTALLFOLDER_INNER" Value="[DETECTED_INSTALLFOLDER]" After="DetectInstallFolderLegacy32" Sequence="first" Condition="DETECTED_INSTALLFOLDER AND DETECTED_INSTALLFOLDER ~&gt;&gt; &quot;\&quot;" />
+		<SetProperty Action="UseDetectedInstallFolderAddSlash" Id="INSTALLFOLDER_INNER" Value="[DETECTED_INSTALLFOLDER]\" After="UseDetectedInstallFolder" Sequence="first" Condition="DETECTED_INSTALLFOLDER AND NOT DETECTED_INSTALLFOLDER ~&gt;&gt; &quot;\&quot;" />
+
 		<!-- Normalize INSTALLFOLDER from the command line or registry before assigning INSTALLFOLDER_INNER. -->
 		<!-- Case 1: already ends with \$(var.Product)\, keep it unchanged. -->
-		<SetProperty Action="SetInstallFolderInnerFromProductDir" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot;" />
+		<SetProperty Action="SetInstallFolderInnerFromProductDir" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]" After="UseDetectedInstallFolderAddSlash" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot;" />
 		<!-- Case 2: already ends with \$(var.Product) but has no trailing slash, add the slash. -->
-		<SetProperty Action="SetInstallFolderInnerFromProductDirNoSlash" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]\" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;" />
+		<SetProperty Action="SetInstallFolderInnerFromProductDirNoSlash" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]\" After="SetInstallFolderInnerFromProductDir" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;" />
 		<!-- Case 3: ends with a slash but not \$(var.Product)\, append $(var.Product)\. -->
-		<SetProperty Action="SetInstallFolderInnerAppendProduct" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]$(var.Product)\" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\&quot; AND NOT (INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot; OR INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;)" />
+		<SetProperty Action="SetInstallFolderInnerAppendProduct" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]$(var.Product)\" After="SetInstallFolderInnerFromProductDirNoSlash" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND INSTALLFOLDER AND INSTALLFOLDER ~&gt;&gt; &quot;\&quot; AND NOT (INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot; OR INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;)" />
 		<!-- Case 4: has no trailing slash and does not end with \$(var.Product), append \$(var.Product)\. -->
-		<SetProperty Action="SetInstallFolderInnerAppendSlashProduct" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]\$(var.Product)\" After="RestoreSavedInstallFolderValue" Sequence="first" Condition="INSTALLFOLDER AND NOT INSTALLFOLDER ~&gt;&gt; &quot;\&quot; AND NOT (INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot; OR INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;)" />
+		<SetProperty Action="SetInstallFolderInnerAppendSlashProduct" Id="INSTALLFOLDER_INNER" Value="[INSTALLFOLDER]\$(var.Product)\" After="SetInstallFolderInnerAppendProduct" Sequence="first" Condition="NOT DETECTED_INSTALLFOLDER AND INSTALLFOLDER AND NOT INSTALLFOLDER ~&gt;&gt; &quot;\&quot; AND NOT (INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)\&quot; OR INSTALLFOLDER ~&gt;&gt; &quot;\$(var.Product)&quot;)" />
 
 		<!-- INSTALLFOLDER_INNER is defined for compatibility with previous versions of the installer. -->
 		<!-- Because we need to use INSTALLFOLDER as the command line argument. -->

@@ -21,10 +21,6 @@
 		<ui:WixUI Id="UI_MyInstallDialog" InstallDirectory="INSTALLFOLDER_INNER" />
 		<UIRef Id="WixUI_ErrorProgressText" />
 
-		<InstallUISequence>
-			<Show Dialog="UI_AnotherAppDialog" Before="WelcomeDlg" Condition="Not installed AND APP_WINDOWS_INSTALLER=&quot;#0&quot;"/>
-		</InstallUISequence>
-
 		<InstallExecuteSequence>
 			<InstallExecute After="RemoveExistingProducts" />
 

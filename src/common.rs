@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 #[cfg(not(target_os = "ios"))]
 use hbb_common::whoami;
 use hbb_common::{
+    allow_err,
     anyhow::{anyhow, Context},
     async_recursion::async_recursion,
     bail, base64,
@@ -93,10 +94,16 @@ pub mod input {
 
 lazy_static::lazy_static! {
     pub static ref SOFTWARE_UPDATE_URL: Arc<Mutex<String>> = Default::default();
+    pub static ref SOFTWARE_UPDATE_VERSION: Arc<Mutex<String>> = Default::default();
     pub static ref DEVICE_ID: Arc<Mutex<String>> = Default::default();
     pub static ref DEVICE_NAME: Arc<Mutex<String>> = Default::default();
     static ref PUBLIC_IPV6_ADDR: Arc<Mutex<(Option<SocketAddr>, Option<Instant>)>> = Default::default();
 }
+
+pub const SOFTWARE_UPDATE_RELEASE_URL: &str =
+    "https://github.com/Augn/rustdesk/releases/tag/master";
+const SOFTWARE_UPDATE_RELEASE_API: &str =
+    "https://api.github.com/repos/Augn/rustdesk/releases/tags/master";
 
 lazy_static::lazy_static! {
     // Is server process, with "--server" args
@@ -961,17 +968,189 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 }
 
 pub fn check_software_update() {
-    // 已禁用版本更新检查
-    return;
+    if is_custom_client() {
+        return;
+    }
+    let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
+    if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
+        std::thread::spawn(move || allow_err!(do_check_software_update()));
+    }
 }
 
-// No need to check `danger_accept_invalid_cert` for now.
-// Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    // 禁用软件更新检查
-    *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
+    #[cfg(not(target_os = "windows"))]
+    {
+        *SOFTWARE_UPDATE_URL.lock().unwrap() = String::new();
+        *SOFTWARE_UPDATE_VERSION.lock().unwrap() = String::new();
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let proxy_conf = Config::get_socks();
+        let tls_url = get_url_for_tls(SOFTWARE_UPDATE_RELEASE_API, &proxy_conf);
+        let tls_type = get_cached_tls_type(tls_url);
+        let is_tls_not_cached = tls_type.is_none();
+        let tls_type = tls_type.unwrap_or(TlsType::Rustls);
+        let client = create_http_client_async(tls_type, false);
+        let send_request = |client: &reqwest::Client| {
+            client
+                .get(SOFTWARE_UPDATE_RELEASE_API)
+                .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+                .header(reqwest::header::USER_AGENT, "omendesk-updater")
+        };
+        let response = match send_request(&client).send().await {
+            Ok(resp) => {
+                upsert_tls_cache(tls_url, tls_type, false);
+                resp
+            }
+            Err(err) => {
+                if is_tls_not_cached && err.is_request() {
+                    let tls_type = TlsType::NativeTls;
+                    let client = create_http_client_async(tls_type, false);
+                    let resp = send_request(&client).send().await?;
+                    upsert_tls_cache(tls_url, tls_type, false);
+                    resp
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        let release: Value = response.error_for_status()?.json().await?;
+        let Some(arch) = crate::platform::windows::release_arch_suffix() else {
+            bail!(
+                "Unsupported Windows release architecture: {}",
+                std::env::consts::ARCH
+            );
+        };
+        let extension = if crate::platform::windows::is_msi_installed().unwrap_or(false)
+            && !crate::is_custom_client()
+        {
+            "msi"
+        } else {
+            "exe"
+        };
+        let latest_asset = latest_release_asset(&release, arch, extension);
+
+        if let Some((version, _)) = latest_asset.filter(|(version, updated_at)| {
+            let latest = get_version_number(version);
+            let current = get_version_number(crate::VERSION);
+            latest > current
+                || (latest == current
+                    && is_release_asset_newer_than_build(updated_at, crate::BUILD_DATE))
+        }) {
+            *SOFTWARE_UPDATE_VERSION.lock().unwrap() = version;
+            *SOFTWARE_UPDATE_URL.lock().unwrap() = SOFTWARE_UPDATE_RELEASE_URL.to_owned();
+
+            #[cfg(feature = "flutter")]
+            {
+                let event = HashMap::from([
+                    ("name", "check_software_update_finish"),
+                    ("url", SOFTWARE_UPDATE_RELEASE_URL),
+                ]);
+                if let Ok(data) = serde_json::to_string(&event) {
+                    let _ = crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, data);
+                }
+            }
+        } else {
+            *SOFTWARE_UPDATE_URL.lock().unwrap() = String::new();
+            *SOFTWARE_UPDATE_VERSION.lock().unwrap() = String::new();
+        }
+    }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn latest_release_asset(release: &Value, arch: &str, extension: &str) -> Option<(String, String)> {
+    let prefix = "rustdesk-";
+    let suffix = format!("-{arch}.{extension}");
+    release
+        .get("assets")?
+        .as_array()?
+        .iter()
+        .filter_map(|asset| {
+            let name = asset.get("name")?.as_str()?;
+            let version = name.strip_prefix(prefix)?.strip_suffix(&suffix)?;
+            is_release_version(version).then(|| {
+                (
+                    version.to_owned(),
+                    asset
+                        .get("updated_at")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+        })
+        .max_by_key(|(version, _)| get_version_number(version))
+}
+
+#[cfg(target_os = "windows")]
+fn is_release_version(version: &str) -> bool {
+    let mut parts = version.split('.');
+    (0..3).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    }) && parts.all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+#[cfg(target_os = "windows")]
+fn is_release_asset_newer_than_build(updated_at: &str, build_date: &str) -> bool {
+    const UPLOAD_GRACE_HOURS: i64 = 6;
+    let Ok(updated_at) = chrono::DateTime::parse_from_rfc3339(updated_at) else {
+        return false;
+    };
+    let Ok(build_date) = chrono::NaiveDateTime::parse_from_str(build_date, "%Y-%m-%d %H:%M")
+    else {
+        return false;
+    };
+    updated_at.with_timezone(&chrono::Utc)
+        > build_date.and_utc() + chrono::Duration::hours(UPLOAD_GRACE_HOURS)
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod software_update_tests {
+    use super::{is_release_asset_newer_than_build, latest_release_asset};
+    use serde_json::json;
+
+    #[test]
+    fn selects_latest_matching_master_release_asset() {
+        let release = json!({
+            "assets": [
+                {"name": "rustdesk-1.4.9-x86_64.exe", "updated_at": "2026-01-01T00:00:00Z"},
+                {"name": "rustdesk-1.4.10-x86_64.exe", "updated_at": "2026-02-01T00:00:00Z"},
+                {"name": "rustdesk-1.5.0-aarch64.exe", "updated_at": "2026-03-01T00:00:00Z"},
+                {"name": "rustdesk-1.5.0-x86_64.msi", "updated_at": "2026-04-01T00:00:00Z"}
+            ]
+        });
+
+        assert_eq!(
+            latest_release_asset(&release, "x86_64", "exe")
+                .map(|asset| asset.0)
+                .as_deref(),
+            Some("1.4.10"),
+        );
+        assert_eq!(
+            latest_release_asset(&release, "x86_64", "msi")
+                .map(|asset| asset.0)
+                .as_deref(),
+            Some("1.5.0"),
+        );
+    }
+
+    #[test]
+    fn same_version_requires_a_build_older_than_upload_grace_period() {
+        assert!(!is_release_asset_newer_than_build(
+            "2026-07-20T17:01:58Z",
+            "2026-07-20 16:16"
+        ));
+        assert!(is_release_asset_newer_than_build(
+            "2026-07-20T17:01:58Z",
+            "2026-07-19 16:16"
+        ));
+    }
 }
 
 #[inline]

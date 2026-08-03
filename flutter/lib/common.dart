@@ -4073,8 +4073,18 @@ void earlyAssert() {
 }
 
 void checkUpdate() {
-  // 已禁用版本更新检查
-  return;
+  if (!isWeb && isDesktop && !bind.isCustomClient()) {
+    platformFFI.registerEventHandler(
+        kCheckSoftwareUpdateFinish, kCheckSoftwareUpdateFinish,
+        (Map<String, dynamic> evt) async {
+      if (evt['url'] is String) {
+        stateGlobal.updateUrl.value = evt['url'];
+      }
+    });
+    Timer(const Duration(seconds: 1), () async {
+      bind.mainGetSoftwareUpdateUrl();
+    });
+  }
 }
 
 // https://github.com/flutter/flutter/issues/153560#issuecomment-2497160535

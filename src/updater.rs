@@ -30,8 +30,7 @@ pub fn update_controlling_session_count(count: usize) {
 
 #[allow(dead_code)]
 pub fn start_auto_update() {
-    // 已禁用自动更新检查
-    return;
+    let _sender = TX_MSG.lock().unwrap();
 }
 
 #[allow(dead_code)]
@@ -133,8 +132,14 @@ fn check_update(manually: bool) -> ResultType<()> {
     if update_url.is_empty() {
         log::debug!("No update available.");
     } else {
-        let download_url = update_url.replace("tag", "download");
-        let version = download_url.split('/').last().unwrap_or_default();
+        let download_url = update_url.replace("/tag/", "/download/");
+        let version = crate::common::SOFTWARE_UPDATE_VERSION
+            .lock()
+            .unwrap()
+            .clone();
+        if version.is_empty() {
+            bail!("The update version is empty");
+        }
         #[cfg(target_os = "windows")]
         let download_url = if cfg!(feature = "flutter") {
             let Some(arch) = crate::platform::windows::release_arch_suffix() else {
@@ -146,12 +151,12 @@ fn check_update(manually: bool) -> ResultType<()> {
             format!(
                 "{}/rustdesk-{}-{}.{}",
                 download_url,
-                version,
+                &version,
                 arch,
                 if update_msi { "msi" } else { "exe" }
             )
         } else {
-            format!("{}/rustdesk-{}-x86-sciter.exe", download_url, version)
+            format!("{}/rustdesk-{}-x86-sciter.exe", download_url, &version)
         };
         log::debug!("New version available: {}", &version);
         let client = create_http_client_with_url_strict(&download_url)?;
@@ -315,7 +320,7 @@ pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let tag = segments.next()?;
     let filename = segments.next()?;
 
-    if owner != "rustdesk"
+    if owner != "Augn"
         || repo != "rustdesk"
         || releases != "releases"
         || download != "download"
@@ -356,13 +361,13 @@ mod tests {
     #[test]
     fn update_download_file_accepts_expected_github_asset_urls() {
         let file = get_download_file_from_url(
-            "https://github.com/rustdesk/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
+            "https://github.com/Augn/rustdesk/releases/download/master/rustdesk-1.4.9-x86_64.msi",
         )
         .expect("valid GitHub release asset URL");
 
         assert_eq!(
             file.file_name().and_then(|name| name.to_str()),
-            Some("rustdesk-1.4.0-x86_64.dmg")
+            Some("rustdesk-1.4.9-x86_64.msi")
         );
     }
 
@@ -372,13 +377,13 @@ mod tests {
             "http://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
             "https://example.com/rustdesk.exe",
             "https://github.com/other/project/releases/download/1/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/nested/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/C:rustdesk.exe",
-            "https://user@github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com:443/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe?download=1",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe#download",
+            "https://github.com/Augn/rustdesk/releases/download/master/",
+            "https://github.com/Augn/rustdesk/releases/download/master/nested/rustdesk.exe",
+            "https://github.com/Augn/rustdesk/releases/download/master/C:rustdesk.exe",
+            "https://user@github.com/Augn/rustdesk/releases/download/master/rustdesk.exe",
+            "https://github.com:443/Augn/rustdesk/releases/download/master/rustdesk.exe",
+            "https://github.com/Augn/rustdesk/releases/download/master/rustdesk.exe?download=1",
+            "https://github.com/Augn/rustdesk/releases/download/master/rustdesk.exe#download",
             "not a url",
         ] {
             assert!(get_download_file_from_url(url).is_none(), "{url}");
