@@ -402,6 +402,22 @@ def build_deb_from_folder(version, binary_folder):
     os.chdir("..")
 
 
+def ad_hoc_sign_macos_app(app_path):
+    service_path = f'{app_path}/Contents/MacOS/service'
+    entitlements_path = 'macos/Runner/Release.entitlements'
+    # Xcode signs before the service is copied. Sign the new nested executable
+    # first, then sign the enclosing app last so its resource seal stays valid.
+    system2(f'xattr -cr "{app_path}"')
+    system2(f'plutil -lint "{entitlements_path}"')
+    system2(
+        f'codesign --force --options runtime --timestamp=none --sign - "{service_path}"')
+    system2(
+        f'codesign --force --options runtime --timestamp=none --sign - '
+        f'--entitlements "{entitlements_path}" "{app_path}"')
+    system2(
+        f'codesign --verify --deep --strict --verbose=4 "{app_path}"')
+
+
 def build_flutter_dmg(version, features):
     if not skip_cargo:
         # set minimum osx build target, now is 10.14, which is the same as the flutter xcode project
@@ -417,7 +433,9 @@ def build_flutter_dmg(version, features):
     mac_arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x86_64'
     system2(
         f'FLUTTER_XCODE_ARCHS={mac_arch} FLUTTER_XCODE_ONLY_ACTIVE_ARCH=YES flutter build macos --release')
-    system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/omendesk.app/Contents/MacOS/')
+    app_path = './build/macos/Build/Products/Release/omendesk.app'
+    system2(f'cp -rf ../target/release/service "{app_path}/Contents/MacOS/"')
+    ad_hoc_sign_macos_app(app_path)
     '''
     system2(
         "create-dmg --volname \"RustDesk Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon RustDesk.app 200 190 --hide-extension RustDesk.app rustdesk.dmg ./build/macos/Build/Products/Release/RustDesk.app")

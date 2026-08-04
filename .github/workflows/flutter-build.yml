@@ -885,18 +885,26 @@ jobs:
           fi
           ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
 
-      - name: create unsigned dmg
+      - name: Create ad-hoc signed DMG
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
           CREATE_DMG="$(command -v create-dmg)"
           CREATE_DMG="$(readlink -f "$CREATE_DMG")"
           sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
-          # Ad-hoc sign the .app so Gatekeeper does not show "damaged" on download.
-          # Users can still right-click -> Open to bypass the unidentified-developer prompt.
-          codesign --force --deep --sign - ./flutter/build/macos/Build/Products/Release/omendesk.app || true
-          create-dmg --icon "omendesk.app" 200 190 --hide-extension "omendesk.app" --window-size 800 400 --app-drop-link 600 185 omendesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/omendesk.app
+          # build.py signs after copying the service binary. Verify again at the
+          # packaging boundary so a damaged signature can never be published.
+          codesign --verify --deep --strict --verbose=4 ./flutter/build/macos/Build/Products/Release/omendesk.app
+          DMG_PATH="omendesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg"
+          create-dmg --icon "omendesk.app" 200 190 --hide-extension "omendesk.app" --window-size 800 400 --app-drop-link 600 185 "$DMG_PATH" ./flutter/build/macos/Build/Products/Release/omendesk.app
+          MOUNT_POINT="$(mktemp -d)"
+          trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true; rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+          codesign --verify --deep --strict --verbose=4 "$MOUNT_POINT/omendesk.app"
+          hdiutil detach "$MOUNT_POINT"
+          rmdir "$MOUNT_POINT"
+          trap - EXIT
 
-      - name: Upload unsigned macOS app
+      - name: Upload ad-hoc signed macOS app
         if: env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
