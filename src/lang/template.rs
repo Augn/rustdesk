@@ -333,7 +333,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Relay Connection", ""),
         ("Secure Connection", ""),
         ("Insecure Connection", ""),
-        ("Continue", ""),
         ("Scale original", ""),
         ("Scale adaptive", ""),
         ("General", ""),
@@ -775,5 +774,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Your ip is blocked by the peer", ""),
         ("id_whitelist_caveat_tip", ""),
         ("whitelist_cidr_tip", ""),
+        ("Continue", ""),
+        ("Browser didn't open? Use the url below to sign in.", ""),
     ].iter().cloned().collect();
 }
