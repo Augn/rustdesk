@@ -45,6 +45,7 @@ mod th;
 mod tr;
 mod tw;
 mod uk;
+mod ur;
 mod vi;
 mod ta;
 mod ge;
@@ -80,6 +81,7 @@ pub const LANGS: &[(&str, &str)] = &[
     ("ko", "한국어"),
     ("kz", "Қазақ"),
     ("uk", "Українська"),
+    ("ur", "اردو"),
     ("fa", "فارسی"),
     ("ca", "Català"),
     ("el", "Ελληνικά"),
@@ -208,6 +210,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "be" => be::T.deref(),
         "he" => he::T.deref(),
         "hr" => hr::T.deref(),
+        "ur" => ur::T.deref(),
         "sc" => sc::T.deref(),
         "ta" => ta::T.deref(),
         "ge" => ge::T.deref(),
@@ -224,7 +227,7 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         }
         if !crate::is_rustdesk() {
             if s.contains("omendesk")
-                && !name.starts_with("upgrade_rustdesk_server_pro")
+                && !name.starts_with("upgrade_omendesk_server_pro")
                 && name != "powered_by_me"
             {
                 let app_name = crate::get_app_name();
