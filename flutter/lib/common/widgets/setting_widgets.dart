@@ -6,9 +6,33 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
 
+double fpsLimitForRefreshRate(double refreshRate) {
+  if (!refreshRate.isFinite || refreshRate <= kMinFps) {
+    return kFallbackMaxFps;
+  }
+  return refreshRate.roundToDouble().clamp(kMinFps, kMaxFps).toDouble();
+}
+
+double currentDisplayFpsLimit() {
+  final views = WidgetsBinding.instance.platformDispatcher.views;
+  if (views.isEmpty) {
+    return kFallbackMaxFps;
+  }
+  return fpsLimitForRefreshRate(views.first.display.refreshRate);
+}
+
+double normalizeCustomFps(double fps, double maxFps) {
+  final limit = fpsLimitForRefreshRate(maxFps);
+  if (!fps.isFinite || fps < kMinFps || fps > kMaxFps) {
+    fps = kDefaultFps;
+  }
+  return fps.roundToDouble().clamp(kMinFps, limit).toDouble();
+}
+
 customImageQualityWidget(
     {required double initQuality,
     required double initFps,
+    required double maxFps,
     required Function(double)? setQuality,
     required Function(double)? setFps,
     required bool showFps,
@@ -17,9 +41,8 @@ customImageQualityWidget(
       initQuality > (showMoreQuality ? kMaxMoreQuality : kMaxQuality)) {
     initQuality = kDefaultQuality;
   }
-  if (initFps < kMinFps || initFps > kMaxFps) {
-    initFps = kDefaultFps;
-  }
+  maxFps = fpsLimitForRefreshRate(maxFps);
+  initFps = normalizeCustomFps(initFps, maxFps);
   final qualityValue = initQuality.obs;
   final fpsValue = initFps.obs;
 
@@ -119,8 +142,8 @@ customImageQualityWidget(
                   child: Slider(
                     value: fpsValue.value,
                     min: kMinFps,
-                    max: kMaxFps,
-                    divisions: ((kMaxFps - kMinFps) / 5).round(),
+                    max: maxFps,
+                    divisions: (maxFps - kMinFps).round(),
                     onChanged: setFps == null
                         ? null
                         : (double value) async {
@@ -150,19 +173,22 @@ customImageQualityWidget(
 customImageQualitySetting() {
   final qualityKey = 'custom_image_quality';
   final fpsKey = 'custom-fps';
+  final maxFps = currentDisplayFpsLimit();
 
   final initQuality =
       (double.tryParse(bind.mainGetUserDefaultOption(key: qualityKey)) ??
           kDefaultQuality);
   final isQuanlityFixed = isOptionFixed(qualityKey);
-  final initFps =
-      (double.tryParse(bind.mainGetUserDefaultOption(key: fpsKey)) ??
-          kDefaultFps);
+  final initFps = normalizeCustomFps(
+      double.tryParse(bind.mainGetUserDefaultOption(key: fpsKey)) ??
+          kDefaultFps,
+      maxFps);
   final isFpsFixed = isOptionFixed(fpsKey);
 
   return customImageQualityWidget(
       initQuality: initQuality,
       initFps: initFps,
+      maxFps: maxFps,
       setQuality: isQuanlityFixed
           ? null
           : (v) {
@@ -172,7 +198,8 @@ customImageQualitySetting() {
       setFps: isFpsFixed
           ? null
           : (v) {
-              bind.mainSetUserDefaultOption(key: fpsKey, value: v.toString());
+              bind.mainSetUserDefaultOption(
+                  key: fpsKey, value: v.round().toString());
             },
       showFps: true,
       showMoreQuality: true);

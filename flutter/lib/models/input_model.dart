@@ -28,6 +28,38 @@ const _kMouseEventDown = 'mousedown';
 const _kMouseEventUp = 'mouseup';
 const _kMouseEventMove = 'mousemove';
 
+bool isExtremeColorTestShortcut({
+  required LogicalKeyboardKey logicalKey,
+  required bool isMac,
+  required bool controlPressed,
+  required bool altPressed,
+  required bool shiftPressed,
+  required bool commandPressed,
+}) {
+  return logicalKey == LogicalKeyboardKey.keyC &&
+      altPressed &&
+      shiftPressed &&
+      (isMac ? commandPressed : controlPressed);
+}
+
+class _ExtremeColorTestSnapshot {
+  final String imageQuality;
+  final int customImageQuality;
+  final int customFps;
+  final String viewStyle;
+  final String codecPreference;
+  final bool i444;
+
+  const _ExtremeColorTestSnapshot({
+    required this.imageQuality,
+    required this.customImageQuality,
+    required this.customFps,
+    required this.viewStyle,
+    required this.codecPreference,
+    required this.i444,
+  });
+}
+
 class CanvasCoords {
   double x = 0;
   double y = 0;
@@ -468,6 +500,11 @@ class InputModel {
   // Disposer for the relativeMouseMode observer (to prevent memory leaks).
   Worker? _relativeMouseModeDisposer;
 
+  final extremeColorTestMode = false.obs;
+  _ExtremeColorTestSnapshot? _extremeColorTestSnapshot;
+  bool _extremeColorTestBusy = false;
+  bool _extremeColorTestShortcutKeyDown = false;
+
   bool _queryOtherWindowCoords = false;
   Rect? _windowRect;
   List<RemoteWindowCoords> _remoteWindowCoords = [];
@@ -492,6 +529,11 @@ class InputModel {
 
   /// Check if the connected server supports relative mouse mode.
   bool get isRelativeMouseModeSupported => _relativeMouse.isSupported;
+
+  bool get isExtremeColorTestSupported =>
+      !isViewCamera &&
+      peerVersion.isNotEmpty &&
+      versionCmp(peerVersion, '1.2.4') >= 0;
 
   InputModel(this.parent) {
     initSideButtonChannel();
@@ -735,7 +777,140 @@ class InputModel {
     }
   }
 
+  bool _handleExtremeColorTestShortcut({
+    required LogicalKeyboardKey logicalKey,
+    required bool isKeyDown,
+    required bool isKeyUp,
+    required bool isKeyRepeat,
+    required bool controlPressed,
+    required bool altPressed,
+    required bool shiftPressed,
+    required bool commandPressed,
+  }) {
+    if (!isDesktop || !isExtremeColorTestSupported) return false;
+    if (logicalKey != LogicalKeyboardKey.keyC) return false;
+
+    if (isKeyUp && _extremeColorTestShortcutKeyDown) {
+      _extremeColorTestShortcutKeyDown = false;
+      return true;
+    }
+    if (isKeyRepeat && _extremeColorTestShortcutKeyDown) return true;
+    if (!isKeyDown) return false;
+
+    if (isExtremeColorTestShortcut(
+      logicalKey: logicalKey,
+      isMac: isMacOS,
+      controlPressed: controlPressed,
+      altPressed: altPressed,
+      shiftPressed: shiftPressed,
+      commandPressed: commandPressed,
+    )) {
+      if (!_extremeColorTestShortcutKeyDown) {
+        _extremeColorTestShortcutKeyDown = true;
+        unawaited(toggleExtremeColorTest());
+      }
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> toggleExtremeColorTest() async {
+    if (!isExtremeColorTestSupported || _extremeColorTestBusy) return;
+    _extremeColorTestBusy = true;
+    try {
+      if (extremeColorTestMode.value) {
+        final snapshot = _extremeColorTestSnapshot;
+        if (snapshot == null) return;
+
+        await bind.sessionSetCustomImageQuality(
+            sessionId: sessionId, value: snapshot.customImageQuality);
+        await bind.sessionSetCustomFps(
+            sessionId: sessionId, fps: snapshot.customFps);
+        await bind.sessionSetViewStyle(
+            sessionId: sessionId, value: snapshot.viewStyle);
+        await parent.target?.canvasModel.updateViewStyle();
+        await bind.sessionPeerOption(
+          sessionId: sessionId,
+          name: kOptionCodecPreference,
+          value: snapshot.codecPreference,
+        );
+        final i444 = bind.sessionGetToggleOptionSync(
+            sessionId: sessionId, arg: kOptionI444);
+        if (i444 != snapshot.i444) {
+          await bind.sessionToggleOption(
+              sessionId: sessionId, value: kOptionI444);
+        }
+        await bind.sessionChangePreferCodec(sessionId: sessionId);
+        await bind.sessionSetImageQuality(
+            sessionId: sessionId, value: snapshot.imageQuality);
+        _extremeColorTestSnapshot = null;
+        extremeColorTestMode.value = false;
+      } else {
+        final customImageQuality =
+            await bind.sessionGetCustomImageQuality(sessionId: sessionId);
+        final customFps = int.tryParse(await bind.sessionGetOption(
+                    sessionId: sessionId, arg: 'custom-fps') ??
+                '') ??
+            kDefaultFps.toInt();
+        _extremeColorTestSnapshot = _ExtremeColorTestSnapshot(
+          imageQuality:
+              await bind.sessionGetImageQuality(sessionId: sessionId) ??
+                  kRemoteImageQualityBalanced,
+          customImageQuality:
+              customImageQuality?.firstOrNull ?? kDefaultQuality.toInt(),
+          customFps: customFps,
+          viewStyle: await bind.sessionGetViewStyle(sessionId: sessionId) ??
+              kRemoteViewStyleAdaptive,
+          codecPreference: await bind.sessionGetOption(
+                  sessionId: sessionId, arg: kOptionCodecPreference) ??
+              '',
+          i444: bind.sessionGetToggleOptionSync(
+              sessionId: sessionId, arg: kOptionI444),
+        );
+        extremeColorTestMode.value = true;
+
+        await bind.sessionSetCustomImageQuality(
+            sessionId: sessionId, value: kMaxMoreQuality.toInt());
+        await bind.sessionSetCustomFps(sessionId: sessionId, fps: 1);
+        await bind.sessionSetViewStyle(
+            sessionId: sessionId, value: kRemoteViewStyleOriginal);
+        await parent.target?.canvasModel.updateViewStyle();
+        await bind.sessionPeerOption(
+          sessionId: sessionId,
+          name: kOptionCodecPreference,
+          value: 'vp9',
+        );
+        if (!bind.sessionGetToggleOptionSync(
+            sessionId: sessionId, arg: kOptionI444)) {
+          await bind.sessionToggleOption(
+              sessionId: sessionId, value: kOptionI444);
+        }
+        await bind.sessionChangePreferCodec(sessionId: sessionId);
+        await bind.sessionSetImageQuality(
+            sessionId: sessionId, value: kRemoteImageQualityCustom);
+      }
+    } catch (e) {
+      debugPrint('Failed to toggle extreme color test: $e');
+      showToast(translate('Failed'));
+    } finally {
+      _extremeColorTestBusy = false;
+    }
+  }
+
   KeyEventResult handleRawKeyEvent(RawKeyEvent e) {
+    if (isInputSourceFlutter &&
+        _handleExtremeColorTestShortcut(
+          logicalKey: e.logicalKey,
+          isKeyDown: e is RawKeyDownEvent,
+          isKeyUp: e is RawKeyUpEvent,
+          isKeyRepeat: e is RawKeyDownEvent && e.repeat,
+          controlPressed: e.isControlPressed,
+          altPressed: e.isAltPressed,
+          shiftPressed: e.isShiftPressed,
+          commandPressed: e.isMetaPressed,
+        )) {
+      return KeyEventResult.handled;
+    }
     if (isViewOnly) return KeyEventResult.handled;
     if (isViewCamera) return KeyEventResult.handled;
     if (!isInputSourceFlutter) {
@@ -821,6 +996,19 @@ class InputModel {
   }
 
   KeyEventResult handleKeyEvent(KeyEvent e) {
+    if (isInputSourceFlutter &&
+        _handleExtremeColorTestShortcut(
+          logicalKey: e.logicalKey,
+          isKeyDown: e is KeyDownEvent,
+          isKeyUp: e is KeyUpEvent,
+          isKeyRepeat: e is KeyRepeatEvent,
+          controlPressed: HardwareKeyboard.instance.isControlPressed,
+          altPressed: HardwareKeyboard.instance.isAltPressed,
+          shiftPressed: HardwareKeyboard.instance.isShiftPressed,
+          commandPressed: HardwareKeyboard.instance.isMetaPressed,
+        )) {
+      return KeyEventResult.handled;
+    }
     if (isViewOnly) return KeyEventResult.handled;
     if (isViewCamera) return KeyEventResult.handled;
     if (!isInputSourceFlutter) {

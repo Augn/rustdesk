@@ -30,7 +30,8 @@ delay:
 // Constants
 pub const FPS: u32 = 30;
 pub const MIN_FPS: u32 = 1;
-pub const MAX_FPS: u32 = 120;
+// Keep integer millisecond capture timeouts nonzero.
+pub const MAX_FPS: u32 = 1000;
 pub const INIT_FPS: u32 = 15;
 
 // Bitrate ratio constants for different quality levels

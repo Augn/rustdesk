@@ -1828,6 +1828,7 @@ void showConfirmSwitchSidesDialog(
 customImageQualityDialog(SessionID sessionId, String id, FFI ffi) async {
   double initQuality = kDefaultQuality;
   double initFps = kDefaultFps;
+  final maxFps = currentDisplayFpsLimit();
   bool qualitySet = false;
   bool fpsSet = false;
 
@@ -1885,13 +1886,12 @@ customImageQualityDialog(SessionID sessionId, String id, FFI ffi) async {
   initFps = fpsOption == null
       ? kDefaultFps
       : double.tryParse(fpsOption) ?? kDefaultFps;
-  if (initFps < kMinFps || initFps > kMaxFps) {
-    initFps = kDefaultFps;
-  }
+  initFps = normalizeCustomFps(initFps, maxFps);
 
   final content = customImageQualityWidget(
       initQuality: initQuality,
       initFps: initFps,
+      maxFps: maxFps,
       setQuality: (v) => setCustomValues(quality: v),
       setFps: (v) => setCustomValues(fps: v),
       showFps: !hideFps,

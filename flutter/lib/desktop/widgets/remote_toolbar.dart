@@ -841,6 +841,9 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       state: widget.state,
       setFullscreen: _setFullscreen,
     ));
+    if (!isWeb) {
+      toolbarItems.add(_ExtremeColorTestMenu(ffi: widget.ffi));
+    }
     // Do not show keyboard for camera connection type.
     if (widget.ffi.connType == ConnType.defaultConn) {
       toolbarItems.add(_KeyboardMenu(id: widget.id, ffi: widget.ffi));
@@ -2991,6 +2994,35 @@ class _CloseMenu extends StatelessWidget {
       color: _ToolbarTheme.redColor,
       hoverColor: _ToolbarTheme.hoverRedColor,
     );
+  }
+}
+
+class _ExtremeColorTestMenu extends StatelessWidget {
+  final FFI ffi;
+  const _ExtremeColorTestMenu({Key? key, required this.ffi}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    if (!ffi.inputModel.isExtremeColorTestSupported) {
+      return const Offstage();
+    }
+    final shortcut = isMacOS ? 'Cmd+Option+Shift+C' : 'Ctrl+Alt+Shift+C';
+    return Obx(() {
+      final active = ffi.inputModel.extremeColorTestMode.value;
+      return _IconMenuButton(
+        icon: Icon(
+          active ? Icons.palette : Icons.palette_outlined,
+          color: Colors.white,
+          size: 22,
+        ),
+        tooltip: '${translate('Extreme color test')} ($shortcut)',
+        onPressed: () => unawaited(ffi.inputModel.toggleExtremeColorTest()),
+        color: active ? _ToolbarTheme.blueColor : _ToolbarTheme.inactiveColor,
+        hoverColor: active
+            ? _ToolbarTheme.hoverBlueColor
+            : _ToolbarTheme.hoverInactiveColor,
+      );
+    });
   }
 }
 

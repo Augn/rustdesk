@@ -759,5 +759,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Continue", "Pokračovat"),
         ("Browser didn't open? Use the url below to sign in.", "Neotevřel se prohlížeč? Pro přihlášení použijte URL níže."),
         ("Lock canvas", "Zamknout zobrazení"),
+        ("Extreme color test", ""),
     ].iter().cloned().collect();
 }

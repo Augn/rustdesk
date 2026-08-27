@@ -759,5 +759,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Continue", "தொடர்க"),
         ("Browser didn't open? Use the url below to sign in.", "உலாவி திறக்கவில்லையா? உள்நுழைய கீழே உள்ள URL ஐப் பயன்படுத்தவும்."),
         ("Lock canvas", "கேன்வாஸைப் பூட்டு"),
+        ("Extreme color test", ""),
     ].iter().cloned().collect();
 }

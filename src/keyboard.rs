@@ -42,6 +42,9 @@ static KEYBOARD_HOOKED: AtomicBool = AtomicBool::new(false);
 #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 static EXIT_SHORTCUT_KEY_DOWN: AtomicBool = AtomicBool::new(false);
 
+#[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+static EXTREME_COLOR_TEST_SHORTCUT_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+
 // Track whether relative mouse mode is currently active.
 // This is set by Flutter via set_relative_mouse_mode_state() and checked
 // by the rdev grab loop to determine if exit shortcuts should be processed.
@@ -609,6 +612,60 @@ fn should_block_relative_mouse_shortcut(key: Key, is_press: bool) -> bool {
     false
 }
 
+#[cfg(feature = "flutter")]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn is_extreme_color_test_shortcut(key: Key) -> bool {
+    if key != Key::KeyC {
+        return false;
+    }
+    let modifiers = MODIFIERS_STATE.lock().unwrap();
+    let alt = *modifiers.get(&Key::Alt).unwrap_or(&false)
+        || *modifiers.get(&Key::AltGr).unwrap_or(&false);
+    let shift = *modifiers.get(&Key::ShiftLeft).unwrap_or(&false)
+        || *modifiers.get(&Key::ShiftRight).unwrap_or(&false);
+
+    #[cfg(target_os = "macos")]
+    let primary = *modifiers.get(&Key::MetaLeft).unwrap_or(&false)
+        || *modifiers.get(&Key::MetaRight).unwrap_or(&false);
+    #[cfg(not(target_os = "macos"))]
+    let primary = *modifiers.get(&Key::ControlLeft).unwrap_or(&false)
+        || *modifiers.get(&Key::ControlRight).unwrap_or(&false);
+
+    primary && alt && shift
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn can_trigger_extreme_color_test() -> bool {
+    let Some(session) = flutter::get_cur_session() else {
+        return false;
+    };
+    if !session.is_default() {
+        return false;
+    }
+    let version = session.lc.read().unwrap().version;
+    version >= hbb_common::get_version_number("1.2.4")
+}
+
+#[cfg(feature = "flutter")]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn should_block_extreme_color_test_shortcut(key: Key, is_press: bool) -> bool {
+    if !KEYBOARD_HOOKED.load(Ordering::SeqCst) || key != Key::KeyC {
+        return false;
+    }
+    if !is_press && EXTREME_COLOR_TEST_SHORTCUT_KEY_DOWN.swap(false, Ordering::SeqCst) {
+        return true;
+    }
+    if !is_extreme_color_test_shortcut(key) || !can_trigger_extreme_color_test() {
+        return false;
+    }
+    if is_press && !EXTREME_COLOR_TEST_SHORTCUT_KEY_DOWN.swap(true, Ordering::SeqCst) {
+        let session_id = flutter::get_cur_session_id();
+        flutter::push_session_event(&session_id, "toggle_extreme_color_test", vec![]);
+    }
+    true
+}
+
 fn start_grab_loop() {
     std::env::set_var("KEYBOARD_ONLY", "y");
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -623,7 +680,9 @@ fn start_grab_loop() {
             let _code = event.platform_code as KeyCode;
 
             #[cfg(feature = "flutter")]
-            if should_block_relative_mouse_shortcut(key, is_press) {
+            if should_block_relative_mouse_shortcut(key, is_press)
+                || should_block_extreme_color_test_shortcut(key, is_press)
+            {
                 return None;
             }
 
@@ -691,7 +750,9 @@ fn start_grab_loop() {
                 log::error!("rdev get unknown key, keycode is {:?}", keycode);
             } else {
                 #[cfg(feature = "flutter")]
-                if should_block_relative_mouse_shortcut(key, is_press) {
+                if should_block_relative_mouse_shortcut(key, is_press)
+                    || should_block_extreme_color_test_shortcut(key, is_press)
+                {
                     return None;
                 }
                 client::process_event(&get_keyboard_mode(), &event, None);

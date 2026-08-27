@@ -759,5 +759,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Browser didn't open? Use the url below to sign in.", "Δεν άνοιξε το πρόγραμμα περιήγησης; Χρησιμοποιήστε τον παρακάτω σύνδεσμο για να συνδεθείτε."),
         ("Lock canvas", "Κλείδωμα καμβά"),
         ("login_required_to_connect", ""),
+        ("Extreme color test", ""),
     ].iter().cloned().collect();
 }
