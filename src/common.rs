@@ -150,7 +150,7 @@ pub fn global_init() -> bool {
         let id_server = "106.54.230.13";
         let relay_server = "106.54.230.13";
         let api_server = "https://deskapi.omennew-art.com";
-        let key = "umen123456";
+        let key = "GAeXoj98+XZbwt28EebgGvF6rCAXTBMsaXRrHJFTSkM=";
         
         // 设置服务器配置
         Config::set_option(keys::OPTION_CUSTOM_RENDEZVOUS_SERVER.to_string(), id_server.to_string());
