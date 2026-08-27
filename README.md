@@ -8,6 +8,17 @@
   <b>We need your help to translate this README, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> and <a href="https://github.com/rustdesk/doc.rustdesk.com">RustDesk Doc</a> to your native language</b>
 </p>
 
+## Omendesk
+
+Omendesk is an actively maintained, open-source remote desktop application
+based on the upstream [RustDesk](https://github.com/rustdesk/rustdesk)
+project. This repository is the public source for the Omendesk-branded builds
+published on the [master release page](https://github.com/Augn/rustdesk/releases/tag/master).
+It is licensed under the [GNU Affero General Public License v3](LICENCE).
+
+[Code signing policy](CODE_SIGNING_POLICY.md) | [Privacy policy](PRIVACY.md) |
+[Downloads](https://github.com/Augn/rustdesk/releases/tag/master)
+
 > [!Caution]
 > **Misuse Disclaimer:** <br>
 > The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
@@ -25,7 +36,7 @@ RustDesk welcomes contribution from everyone. See [CONTRIBUTING.md](docs/CONTRIB
 
 [**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
 
-[**BINARY DOWNLOAD**](https://github.com/rustdesk/rustdesk/releases)
+[**OMENDESK BINARY DOWNLOAD**](https://github.com/Augn/rustdesk/releases/tag/master)
 
 [**NIGHTLY BUILD**](https://github.com/rustdesk/rustdesk/releases/tag/nightly)
 
