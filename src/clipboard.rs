@@ -32,9 +32,9 @@ lazy_static::lazy_static! {
 }
 
 #[cfg(not(target_os = "android"))]
-const CLIPBOARD_GET_MAX_RETRY: usize = 3;
+const CLIPBOARD_IO_MAX_RETRY: usize = 10;
 #[cfg(not(target_os = "android"))]
-const CLIPBOARD_GET_RETRY_INTERVAL_DUR: Duration = Duration::from_millis(33);
+const CLIPBOARD_IO_RETRY_INTERVAL_DUR: Duration = Duration::from_millis(33);
 
 #[cfg(not(target_os = "android"))]
 fn valid_rgba_dimensions(width: i32, height: i32, data_len: usize) -> Option<(usize, usize)> {
@@ -239,15 +239,21 @@ pub fn check_clipboard_cm() -> ResultType<MultiClipboards> {
 
 #[cfg(not(target_os = "android"))]
 fn update_clipboard_(multi_clipboards: Vec<Clipboard>, side: ClipboardSide) {
+    let current_clipboards = MultiClipboards {
+        clipboards: multi_clipboards.clone(),
+        ..Default::default()
+    };
     let to_update_data = proto::from_multi_clipboards(multi_clipboards);
     if to_update_data.is_empty() {
         return;
     }
-    do_update_clipboard_(to_update_data, side);
+    if do_update_clipboard_(to_update_data, side) {
+        *LAST_MULTI_CLIPBOARDS.lock().unwrap() = current_clipboards;
+    }
 }
 
 #[cfg(not(target_os = "android"))]
-fn do_update_clipboard_(mut to_update_data: Vec<ClipboardData>, side: ClipboardSide) {
+fn do_update_clipboard_(mut to_update_data: Vec<ClipboardData>, side: ClipboardSide) -> bool {
     let mut ctx = CLIPBOARD_CTX.lock().unwrap();
     if ctx.is_none() {
         match ClipboardContext::new() {
@@ -256,7 +262,7 @@ fn do_update_clipboard_(mut to_update_data: Vec<ClipboardData>, side: ClipboardS
             }
             Err(e) => {
                 log::error!("Failed to create clipboard context: {}", e);
-                return;
+                return false;
             }
         }
     }
@@ -266,8 +272,10 @@ fn do_update_clipboard_(mut to_update_data: Vec<ClipboardData>, side: ClipboardS
             log::debug!("Failed to set clipboard: {}", e);
         } else {
             log::debug!("{} updated on {}", CLIPBOARD_NAME, side);
+            return true;
         }
     }
+    false
 }
 
 #[cfg(not(target_os = "android"))]
@@ -298,6 +306,17 @@ pub fn update_clipboard(multi_clipboards: Vec<Clipboard>, side: ClipboardSide) {
     std::thread::spawn(move || {
         update_clipboard_(multi_clipboards, side);
     });
+}
+
+#[cfg(not(target_os = "android"))]
+pub async fn update_clipboard_wait(multi_clipboards: Vec<Clipboard>, side: ClipboardSide) {
+    if let Err(e) = hbb_common::tokio::task::spawn_blocking(move || {
+        update_clipboard_(multi_clipboards, side);
+    })
+    .await
+    {
+        log::error!("Failed to join clipboard update task: {}", e);
+    }
 }
 
 #[cfg(not(target_os = "android"))]
@@ -351,7 +370,7 @@ impl ClipboardContext {
         // Related issues:
         // https://github.com/rustdesk/rustdesk/issues/9263
         // https://github.com/rustdesk/rustdesk/issues/9222#issuecomment-2329233175
-        for i in 0..CLIPBOARD_GET_MAX_RETRY {
+        for i in 0..CLIPBOARD_IO_MAX_RETRY {
             match self.inner.get_formats(formats) {
                 Ok(data) => {
                     return Ok(data
@@ -361,8 +380,11 @@ impl ClipboardContext {
                 }
                 Err(e) => match e {
                     arboard::Error::ClipboardOccupied => {
+                        if i + 1 == CLIPBOARD_IO_MAX_RETRY {
+                            break;
+                        }
                         log::debug!("Failed to get clipboard formats, clipboard is occupied, retrying... {}", i + 1);
-                        std::thread::sleep(CLIPBOARD_GET_RETRY_INTERVAL_DUR);
+                        std::thread::sleep(CLIPBOARD_IO_RETRY_INTERVAL_DUR);
                     }
                     _ => {
                         log::error!("Failed to get clipboard formats, {}", e);
@@ -371,7 +393,7 @@ impl ClipboardContext {
                 },
             }
         }
-        bail!("Failed to get clipboard formats, clipboard is occupied, {CLIPBOARD_GET_MAX_RETRY} retries failed");
+        bail!("Failed to get clipboard formats, clipboard is occupied, {CLIPBOARD_IO_MAX_RETRY} retries failed");
     }
 
     pub fn get(&mut self, side: ClipboardSide, force: bool) -> ResultType<Vec<ClipboardData>> {
@@ -440,8 +462,23 @@ impl ClipboardContext {
 
     fn set(&mut self, data: &[ClipboardData]) -> ResultType<()> {
         let _lock = ARBOARD_MTX.lock().unwrap();
-        self.inner.set_formats(data)?;
-        Ok(())
+        for i in 0..CLIPBOARD_IO_MAX_RETRY {
+            match self.inner.set_formats(data) {
+                Ok(()) => return Ok(()),
+                Err(arboard::Error::ClipboardOccupied) => {
+                    if i + 1 == CLIPBOARD_IO_MAX_RETRY {
+                        break;
+                    }
+                    log::debug!(
+                        "Failed to set clipboard formats, clipboard is occupied, retrying... {}",
+                        i + 1
+                    );
+                    std::thread::sleep(CLIPBOARD_IO_RETRY_INTERVAL_DUR);
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        bail!("Failed to set clipboard formats, clipboard is occupied, {CLIPBOARD_IO_MAX_RETRY} retries failed");
     }
 
     #[cfg(target_os = "linux")]

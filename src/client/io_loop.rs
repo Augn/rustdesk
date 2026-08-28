@@ -1,5 +1,5 @@
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::clipboard::{update_clipboard, ClipboardSide};
+use crate::clipboard::{update_clipboard_wait, ClipboardSide};
 #[cfg(not(any(target_os = "ios")))]
 use crate::{audio_service, clipboard::CLIPBOARD_INTERVAL, ConnInner, CLIENT_SERVER};
 use crate::{
@@ -1464,8 +1464,19 @@ impl<T: InvokeUiSession> Remote<T> {
                     if clipboard_allowed {
                         #[cfg(all(feature = "flutter", not(target_os = "ios")))]
                         let cb_to_forward = cb.clone();
+                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
+                        {
+                            let mut msg_out = Message::new();
+                            msg_out.set_clipboard(cb_to_forward);
+                            let source_peer_id = self.handler.get_id();
+                            crate::flutter::send_clipboard_msg_to_other_sessions(
+                                msg_out,
+                                false,
+                                &source_peer_id,
+                            );
+                        }
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        update_clipboard(vec![cb], ClipboardSide::Client);
+                        update_clipboard_wait(vec![cb], ClipboardSide::Client).await;
                         #[cfg(target_os = "ios")]
                         {
                             let content = if cb.compress {
@@ -1479,17 +1490,6 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         #[cfg(target_os = "android")]
                         crate::clipboard::handle_msg_clipboard(cb);
-                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
-                        {
-                            let mut msg_out = Message::new();
-                            msg_out.set_clipboard(cb_to_forward);
-                            let source_peer_id = self.handler.get_id();
-                            crate::flutter::send_clipboard_msg_to_other_sessions(
-                                msg_out,
-                                false,
-                                &source_peer_id,
-                            );
-                        }
                     }
                 }
                 Some(message::Union::MultiClipboards(_mcb)) => {
@@ -1500,8 +1500,19 @@ impl<T: InvokeUiSession> Remote<T> {
                     if clipboard_allowed {
                         #[cfg(all(feature = "flutter", not(target_os = "ios")))]
                         let mcb_to_forward = _mcb.clone();
+                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
+                        {
+                            let mut msg_out = Message::new();
+                            msg_out.set_multi_clipboards(mcb_to_forward);
+                            let source_peer_id = self.handler.get_id();
+                            crate::flutter::send_clipboard_msg_to_other_sessions(
+                                msg_out,
+                                false,
+                                &source_peer_id,
+                            );
+                        }
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        update_clipboard(_mcb.clipboards, ClipboardSide::Client);
+                        update_clipboard_wait(_mcb.clipboards, ClipboardSide::Client).await;
                         #[cfg(target_os = "ios")]
                         {
                             if let Some(cb) = _mcb
@@ -1521,17 +1532,6 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
                         #[cfg(target_os = "android")]
                         crate::clipboard::handle_msg_multi_clipboards(_mcb);
-                        #[cfg(all(feature = "flutter", not(target_os = "ios")))]
-                        {
-                            let mut msg_out = Message::new();
-                            msg_out.set_multi_clipboards(mcb_to_forward);
-                            let source_peer_id = self.handler.get_id();
-                            crate::flutter::send_clipboard_msg_to_other_sessions(
-                                msg_out,
-                                false,
-                                &source_peer_id,
-                            );
-                        }
                     }
                 }
                 #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
