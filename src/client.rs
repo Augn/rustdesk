@@ -399,7 +399,7 @@ impl Client {
         }
         log::info!("rendezvous server: {}", rendezvous_server);
         let mut socket = socket?;
-        let my_addr = socket.local_addr();
+        let mut my_addr = socket.local_addr();
         let mut signed_id_pk = Vec::new();
         let mut relay_server = "".to_owned();
         let mut peer_addr = Config::get_any_listen_addr(true);
@@ -415,7 +415,8 @@ impl Client {
         };
 
         let switch_code = interface.get_switch_code();
-        if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
+        let secure_rendezvous = !key.is_empty() && (!token.is_empty() || !switch_code.is_empty());
+        if secure_rendezvous {
             secure_tcp(&mut socket, &key)
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
@@ -460,7 +461,23 @@ impl Client {
             switch_code,
             ..Default::default()
         });
+        let mut reconnect_rendezvous = false;
         for i in 1..=3 {
+            if reconnect_rendezvous {
+                socket = match Self::connect_rendezvous(&rendezvous_server, &key, secure_rendezvous)
+                    .await
+                {
+                    Ok(socket) => {
+                        reconnect_rendezvous = false;
+                        socket
+                    }
+                    Err(err) => {
+                        log::warn!("#{} failed to reconnect to rendezvous server: {}", i, err);
+                        continue;
+                    }
+                };
+                my_addr = socket.local_addr();
+            }
             log::info!(
                 "#{} {} punch attempt with {}, id: {}",
                 i,
@@ -468,7 +485,11 @@ impl Client {
                 my_addr,
                 peer
             );
-            socket.send(&msg_out).await?;
+            if let Err(err) = socket.send(&msg_out).await {
+                log::warn!("#{} failed to send punch request: {}", i, err);
+                reconnect_rendezvous = true;
+                continue;
+            }
             // below timeout should not bigger than hbbs's connection timeout.
             if let Some(msg_in) =
                 crate::get_next_nonkeyexchange_msg(&mut socket, Some(i * 3000)).await
@@ -826,6 +847,22 @@ impl Client {
         Ok(option_pk)
     }
 
+    async fn connect_rendezvous(
+        rendezvous_server: &str,
+        key: &str,
+        secure: bool,
+    ) -> ResultType<Stream> {
+        let mut socket = connect_tcp(rendezvous_server, CONNECT_TIMEOUT)
+            .await
+            .with_context(|| "Failed to connect to rendezvous server")?;
+        if secure {
+            secure_tcp(&mut socket, key)
+                .await
+                .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
+        }
+        Ok(socket)
+    }
+
     /// Request a relay connection to the server.
     async fn request_relay(
         peer: &str,
@@ -843,13 +880,19 @@ impl Client {
 
         for i in 1..=3 {
             // use different socket due to current hbbs implementation requiring different nat address for each attempt
-            let mut socket = connect_tcp(rendezvous_server, CONNECT_TIMEOUT)
-                .await
-                .with_context(|| "Failed to connect to rendezvous server")?;
-
-            if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
-                secure_tcp(&mut socket, key).await?;
-            }
+            let mut socket = match Self::connect_rendezvous(
+                rendezvous_server,
+                key,
+                !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()),
+            )
+            .await
+            {
+                Ok(socket) => socket,
+                Err(err) => {
+                    log::warn!("#{} failed to connect to rendezvous server: {}", i, err);
+                    continue;
+                }
+            };
 
             ipv4 = socket.local_addr().is_ipv4();
             let mut msg_out = RendezvousMessage::new();
@@ -871,7 +914,10 @@ impl Client {
                 switch_code: switch_code.to_owned(),
                 ..Default::default()
             });
-            socket.send(&msg_out).await?;
+            if let Err(err) = socket.send(&msg_out).await {
+                log::warn!("#{} failed to send relay request: {}", i, err);
+                continue;
+            }
 
             if let Some(msg_in) =
                 crate::get_next_nonkeyexchange_msg(&mut socket, Some(CONNECT_TIMEOUT)).await
