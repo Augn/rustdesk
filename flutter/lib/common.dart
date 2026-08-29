@@ -4087,7 +4087,7 @@ void earlyAssert() {
 
 void checkUpdate() {
   if (!isWeb && isDesktop && !bind.isCustomClient()) {
-    const updateCheckInterval = Duration(minutes: 10);
+    const updateCheckInterval = Duration(hours: 1);
     platformFFI.registerEventHandler(
         kCheckSoftwareUpdateFinish, kCheckSoftwareUpdateFinish,
         (Map<String, dynamic> evt) async {

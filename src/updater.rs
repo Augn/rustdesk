@@ -70,11 +70,11 @@ static CONTROLLING_SESSION_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Initial wait after startup before the first update check (30 seconds).
 pub const INITIAL_CHECK_DELAY: Duration = Duration::from_secs(30);
 
-/// Interval between successful update checks (10 minutes).
-pub const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 10);
+/// Interval between successful update checks (1 hour).
+pub const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Minimum interval between consecutive update checks (10 minutes).
-pub const MIN_INTERVAL: Duration = UPDATE_CHECK_INTERVAL;
+pub const MIN_INTERVAL: Duration = Duration::from_secs(60 * 10);
 
 /// Retry interval when an update check fails or a session is active (30 minutes).
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 30);
