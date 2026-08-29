@@ -2162,6 +2162,11 @@ async fn secure_tcp_impl(conn: &mut Stream, key: &str, log_on_success: bool) -> 
     let Some(rs_pk) = rs_pk else {
         bail!("Handshake failed: invalid public key from rendezvous server");
     };
+    // Some TCP proxies do not forward server-first traffic until the client sends data.
+    // An empty KeyExchange asks compatible servers to start the signed handshake immediately.
+    let mut request = RendezvousMessage::new();
+    request.set_key_exchange(KeyExchange::default());
+    timeout(CONNECT_TIMEOUT, conn.send(&request)).await??;
     match timeout(READ_TIMEOUT, conn.next()).await? {
         Some(Ok(bytes)) => {
             if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
