@@ -4087,6 +4087,7 @@ void earlyAssert() {
 
 void checkUpdate() {
   if (!isWeb && isDesktop && !bind.isCustomClient()) {
+    const updateCheckInterval = Duration(minutes: 10);
     platformFFI.registerEventHandler(
         kCheckSoftwareUpdateFinish, kCheckSoftwareUpdateFinish,
         (Map<String, dynamic> evt) async {
@@ -4096,6 +4097,11 @@ void checkUpdate() {
     });
     Timer(const Duration(seconds: 1), () async {
       bind.mainGetSoftwareUpdateUrl();
+    });
+    Timer.periodic(updateCheckInterval, (_) async {
+      if (stateGlobal.updateUrl.value.isEmpty) {
+        bind.mainGetSoftwareUpdateUrl();
+      }
     });
   }
 }
