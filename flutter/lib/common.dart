@@ -4091,6 +4091,9 @@ void checkUpdate() {
     platformFFI.registerEventHandler(
         kCheckSoftwareUpdateFinish, kCheckSoftwareUpdateFinish,
         (Map<String, dynamic> evt) async {
+      if (evt['content'] is String) {
+        stateGlobal.updateContent.value = evt['content'];
+      }
       if (evt['url'] is String) {
         stateGlobal.updateUrl.value = evt['url'];
       }

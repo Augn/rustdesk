@@ -1047,9 +1047,14 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 
             #[cfg(feature = "flutter")]
             {
+                let release_notes = release
+                    .get("body")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let event = HashMap::from([
                     ("name", "check_software_update_finish"),
                     ("url", SOFTWARE_UPDATE_RELEASE_URL),
+                    ("content", release_notes),
                 ]);
                 if let Ok(data) = serde_json::to_string(&event) {
                     let _ = crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, data);

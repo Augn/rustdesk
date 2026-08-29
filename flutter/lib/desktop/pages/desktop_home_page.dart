@@ -93,8 +93,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (!isOutgoingOnly) buildIDBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
       FutureBuilder<Widget>(
-        future: Future.value(
-            Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
+        future: Future.value(Obx(() => buildHelpCards(
+            stateGlobal.updateUrl.value, stateGlobal.updateContent.value))),
         builder: (_, data) {
           if (data.hasData) {
             if (isIncomingOnly) {
@@ -427,7 +427,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  Widget buildHelpCards(String updateUrl) {
+  Widget buildHelpCards(String updateUrl, String updateContent) {
     if (!bind.isCustomClient() &&
         updateUrl.isNotEmpty &&
         !isCardClosed) {
@@ -449,7 +449,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           onPressed,
           closeButton: true,
           help: isToUpdate ? 'Changelog' : null,
-          link: isToUpdate ? updateUrl : null);
+          onHelp: isToUpdate ? () => _showUpdateContent(updateContent) : null);
     }
     if (systemError.isNotEmpty) {
       return buildInstallCard("", systemError, "", () {});
@@ -573,6 +573,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       {double marginTop = 20.0,
       String? help,
       String? link,
+      GestureTapCallback? onHelp,
       bool? closeButton,
       String? closeOption}) {
     if (bind.mainGetBuildinOption(key: kOptionHideHelpCards) == 'Y' &&
@@ -659,8 +660,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                           ? <Widget>[
                               Center(
                                   child: InkWell(
-                                      onTap: () async =>
-                                          await launchUrl(Uri.parse(link!)),
+                                      onTap: onHelp ??
+                                          () async =>
+                                              await launchUrl(Uri.parse(link!)),
                                       child: Text(
                                         translate(help),
                                         style: TextStyle(
@@ -687,6 +689,27 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           ),
       ],
     );
+  }
+
+  void _showUpdateContent(String content) {
+    final text = content.trim();
+    gFFI.dialogManager.show((setState, close, context) {
+      return CustomAlertDialog(
+        title: Text('${translate('Changelog')} (${bind.mainGetNewVersion()})'),
+        contentBoxConstraints: const BoxConstraints(
+          minWidth: 500,
+          maxWidth: 620,
+          maxHeight: 420,
+        ),
+        content: SingleChildScrollView(
+          child: SelectableText(text.isEmpty ? translate('Empty') : text),
+        ),
+        actions: [
+          dialogButton('Close', onPressed: close),
+        ],
+        onCancel: close,
+      );
+    });
   }
 
   @override
