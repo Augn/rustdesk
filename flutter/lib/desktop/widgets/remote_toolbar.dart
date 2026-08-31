@@ -3010,10 +3010,13 @@ class _ExtremeColorTestMenu extends StatelessWidget {
     return Obx(() {
       final active = ffi.inputModel.extremeColorTestMode.value;
       return _IconMenuButton(
-        icon: Icon(
-          active ? Icons.palette : Icons.palette_outlined,
-          color: Colors.white,
-          size: 22,
+        icon: SizedBox.square(
+          dimension: _ToolbarTheme.buttonSize,
+          child: Icon(
+            active ? Icons.palette : Icons.palette_outlined,
+            color: Colors.white,
+            size: 22,
+          ),
         ),
         tooltip: '${translate('Extreme color test')} ($shortcut)',
         onPressed: () => unawaited(ffi.inputModel.toggleExtremeColorTest()),
