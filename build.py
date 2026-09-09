@@ -893,7 +893,7 @@ def build_deb_from_folder(version, binary_folder, want_drm=False):
 
 def ad_hoc_sign_macos_app(app_path):
     service_path = f'{app_path}/Contents/MacOS/service'
-    entitlements_path = 'macos/Runner/Release.entitlements'
+    entitlements_path = 'macos/Runner/AdHoc.entitlements'
     # Xcode signs before the service is copied. Sign the new nested executable
     # first, then sign the enclosing app last so its resource seal stays valid.
     system2(f'xattr -cr "{app_path}"')
@@ -905,6 +905,9 @@ def ad_hoc_sign_macos_app(app_path):
         f'--entitlements "{entitlements_path}" "{app_path}"')
     system2(
         f'codesign --verify --deep --strict --verbose=4 "{app_path}"')
+    # Signature verification alone does not exercise dyld's library validation.
+    subprocess.run(
+        [f'{app_path}/Contents/MacOS/omendesk', '--version'], check=True, timeout=30)
 
 
 def build_flutter_dmg(version, features):

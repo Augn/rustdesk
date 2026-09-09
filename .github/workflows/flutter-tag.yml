@@ -2,6 +2,11 @@ name: Flutter Tag Build
 
 on:
   workflow_dispatch:
+    inputs:
+      macos-only:
+        description: "Build and publish only the macOS packages"
+        type: boolean
+        default: false
   # Automatic triggers disabled; run manually only.
   # push:
   #   tags:
@@ -17,3 +22,4 @@ jobs:
     with:
       upload-artifact: true
       upload-tag: ${{ github.ref_name }}
+      macos-only: ${{ inputs.macos-only }}
