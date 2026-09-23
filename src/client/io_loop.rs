@@ -598,6 +598,9 @@ impl<T: InvokeUiSession> Remote<T> {
                             } else {
                                 log::debug!("Failed to record local audio channel: {}", err);
                             }
+                            // Both arms fall through with nothing else in this loop blocking, so
+                            // without a pause the thread spun a core for the whole voice call.
+                            std::thread::sleep(std::time::Duration::from_millis(1));
                         }
                     }
                 }
@@ -638,6 +641,19 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.check_clipboard_file_context();
             }
             Data::Message(msg) => {
+                // The Flutter clipboard broadcast is process-wide, so a clipboard can reach this
+                // round's queue before the round has logged in; it is dropped here, on the round
+                // itself.
+                #[cfg(feature = "flutter")]
+                if !self.is_connected
+                    && matches!(
+                        msg.union.as_ref(),
+                        Some(message::Union::Clipboard(_))
+                            | Some(message::Union::MultiClipboards(_))
+                    )
+                {
+                    return true;
+                }
                 match &msg.union {
                     Some(message::Union::Misc(misc)) => match misc.union {
                         Some(misc::Union::RefreshVideo(_)) => {
@@ -1508,7 +1524,11 @@ impl<T: InvokeUiSession> Remote<T> {
                     _ => {}
                 },
                 Some(message::Union::CursorData(cd)) => {
-                    self.handler.set_cursor_data(cd);
+                    let id = cd.id;
+                    match decode_cursor_data(cd) {
+                        Ok(cd) => self.handler.set_cursor_data(cd),
+                        Err(err) => log::warn!("Rejected cursor {id}: {err}"),
+                    }
                 }
                 Some(message::Union::CursorId(id)) => {
                     self.handler.set_cursor_id(id.to_string());
@@ -2542,6 +2562,47 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 }
 
+// Both UI handlers receive validated, uncompressed RGBA from the receive loop.
+fn decode_cursor_data(data: CursorData) -> hbb_common::ResultType<CursorData> {
+    use hbb_common::{anyhow::anyhow, bail};
+
+    // Limit decoded cursor data to 1 MiB before JSON serialization.
+    const MAX_CURSOR_SIZE: i32 = 512;
+    const RGBA_CHANNELS: usize = 4;
+
+    let mut cd = data;
+    if !(1..=MAX_CURSOR_SIZE).contains(&cd.width) || !(1..=MAX_CURSOR_SIZE).contains(&cd.height) {
+        bail!("invalid source size {}x{}", cd.width, cd.height);
+    }
+    if !(0..cd.width).contains(&cd.hotx) || !(0..cd.height).contains(&cd.hoty) {
+        bail!(
+            "hotspot ({},{}) is outside the cursor image",
+            cd.hotx,
+            cd.hoty
+        );
+    }
+    let expected = (cd.width as usize)
+        .checked_mul(cd.height as usize)
+        .and_then(|pixels| pixels.checked_mul(RGBA_CHANNELS))
+        .ok_or_else(|| anyhow!("cursor RGBA size overflow"))?;
+    let max_compressed_size = zstd::zstd_safe::compress_bound(expected);
+    if cd.colors.len() > max_compressed_size {
+        bail!(
+            "compressed cursor data too large: {} bytes (limit {max_compressed_size})",
+            cd.colors.len()
+        );
+    }
+    let colors = zstd::bulk::decompress(&cd.colors, expected)?;
+    if colors.len() != expected {
+        bail!(
+            "invalid RGBA length: expected {expected}, got {}",
+            colors.len()
+        );
+    }
+    cd.colors = colors.into();
+    Ok(cd)
+}
+
 struct RemoveJob {
     files: Vec<FileEntry>,
     path: String,
@@ -2593,5 +2654,74 @@ impl Drop for VideoThread {
     fn drop(&mut self) {
         // since channels are buffered, messages sent before the disconnect will still be properly received.
         *self.discard_queue.write().unwrap() = true;
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "flutter")]
+mod tests {
+    use super::*;
+    use crate::flutter::FlutterHandler;
+
+    /// A round's `Remote` over a loopback pair, before any login: what it sends to `peer`
+    /// arrives at `far`.
+    async fn remote_and_peer() -> (Remote<FlutterHandler>, Stream, Stream) {
+        let listener = hbb_common::tcp::new_listener("127.0.0.1:0", false)
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (peer, accepted) = tokio::join!(
+            hbb_common::socket_client::connect_tcp(addr.to_string(), 3000),
+            listener.accept()
+        );
+        let (accepted, far_addr) = accepted.unwrap();
+        let far = Stream::Tcp(hbb_common::tcp::FramedStream::from(accepted, far_addr));
+        let (sender, receiver) = mpsc::unbounded_channel::<Data>();
+        let remote = Remote::new(Session::<FlutterHandler>::default(), receiver, sender);
+        (remote, peer.unwrap(), far)
+    }
+
+    async fn arrives(far: &mut Stream) -> bool {
+        matches!(hbb_common::timeout(300, far.next()).await, Ok(Some(Ok(_))))
+    }
+
+    fn clipboard() -> Data {
+        let mut msg = Message::new();
+        msg.set_clipboard(Clipboard {
+            content: b"copied while this login was pending".to_vec().into(),
+            ..Default::default()
+        });
+        Data::Message(msg)
+    }
+
+    fn auth_2fa() -> Data {
+        let mut msg = Message::new();
+        msg.set_auth_2fa(Auth2FA {
+            code: "123456".to_owned(),
+            ..Default::default()
+        });
+        Data::Message(msg)
+    }
+
+    // A clipboard queued before this round's login stays here; what the login itself sends
+    // through the same queue does not.
+    #[tokio::test]
+    async fn a_clipboard_queued_before_this_rounds_login_is_dropped() {
+        let (mut remote, mut peer, mut far) = remote_and_peer().await;
+        assert!(!remote.is_connected);
+        assert!(remote.handle_msg_from_ui(clipboard(), &mut peer).await);
+        assert!(
+            !arrives(&mut far).await,
+            "a clipboard went out before the login"
+        );
+        assert!(remote.handle_msg_from_ui(auth_2fa(), &mut peer).await);
+        assert!(arrives(&mut far).await, "the 2FA code was held back");
+
+        remote.is_connected = true;
+        assert!(remote.handle_msg_from_ui(clipboard(), &mut peer).await);
+        assert!(
+            arrives(&mut far).await,
+            "a clipboard after the login was held back"
+        );
     }
 }

@@ -188,7 +188,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Enter your password", "Sisesta oma parool"),
         ("Logging in...", "Sisselogimine..."),
         ("Enable RDP session sharing", "Luba RDP-seansi jagamine"),
-        ("Auto Login", "Logi automaatselt sisse (Kehtib vaid valiku \"lukusta pärast seansi lõppu\" lubamisel)"),
+        ("Auto Login", "Logi automaatselt sisse (Kehtib vaid valiku \"Lukusta pärast seansi lõppu\" lubamisel)"),
         ("Enable direct IP access", "Luba otsene IP-juurdepääs"),
         ("Rename", "Nimeta ümber"),
         ("Space", "Ruum"),
@@ -782,5 +782,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("omendesk could not load a GStreamer component needed for screen capture ({})", "omendesk ei suutnud laadida ekraani jäädvustamiseks vajalikku GStreameri komponenti ({})"),
         ("Relay fallback delay in seconds", "Viivitus enne relee kasutamist sekundites"),
         ("relay-fallback-delay-tip", "Kui kaua juba loodud releeühendus ootab otsest WebRTC-ühendust, enne kui seda selle asemel kasutatakse. Suurendage, et anda aeglasele otseühendusele rohkem aega; vähendage, et võrkudes, kus otseühendust luua ei saa, releele kiiremini üle minna. Jätke tühjaks vaikeväärtuse 2.5 sekundit kasutamiseks."),
+        ("To start a voice call, enable \"Audio capture\" on the \"Screen share\" page.", "")
     ].iter().cloned().collect();
 }

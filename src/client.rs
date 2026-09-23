@@ -30,9 +30,10 @@ use uuid::Uuid;
 use crate::{
     check_port,
     common::input::{MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP},
-    create_symmetric_key_msg, decode_id_pk, decode_id_pk_dtls, get_rs_pk, is_keyboard_mode_supported,
+    create_symmetric_key_msg, decode_id_pk, decode_id_pk_dtls, dtls_fingerprint_bound, get_rs_pk,
+    is_keyboard_mode_supported,
     kcp_stream::KcpStream,
-    secure_tcp,
+    secure_tcp, secure_tcp_required,
     ui_interface::{get_builtin_option, resolve_avatar_url, use_texture_render},
     ui_session_interface::{InvokeUiSession, Session},
 };
@@ -56,7 +57,7 @@ use hbb_common::{
     rand,
     rendezvous_proto::*,
     sha2::{Digest, Sha256},
-    socket_client::{connect_tcp, connect_tcp_local, ipv4_to_ipv6, new_direct_udp_for},
+    socket_client::{connect_tcp, connect_tcp_local, ipv4_to_ipv6, new_direct_udp_for_unverified},
     sodiumoxide::{base64, crypto::sign},
     timeout,
     tokio::{
@@ -95,7 +96,10 @@ pub use super::lang::*;
 
 #[cfg(not(target_os = "linux"))]
 mod audio_playback;
+#[cfg(target_os = "windows")]
+mod audio_playback_recovery;
 #[cfg(all(test, not(target_os = "linux")))]
+#[path = "client/tests/audio_state_tests.rs"]
 mod audio_state_tests;
 pub mod file_trait;
 pub mod helper;
@@ -486,7 +490,7 @@ impl Client {
         // no need to care about multiple rendezvous servers case, since it is acutally not used any more.
         // Shared state for UDP NAT test result
         if crate::get_udp_punch_enabled() && !interface.is_force_relay() {
-            if let Ok((socket, addr)) = new_direct_udp_for(&rendezvous_server).await {
+            if let Ok((socket, addr)) = new_direct_udp_for_unverified(&rendezvous_server).await {
                 let udp_port = Arc::new(Mutex::new(0));
                 let up_cloned = udp_port.clone();
                 let socket_cloned = socket.clone();
@@ -845,13 +849,44 @@ impl Client {
         };
 
         let switch_code = interface.get_switch_code();
-        let secure_rendezvous = !key.is_empty() && (!token.is_empty() || !switch_code.is_empty());
-        if secure_rendezvous {
+        let legacy_secure = !key.is_empty() && (!token.is_empty() || !switch_code.is_empty());
+        let carries_offer = webrtc_offerer.as_ref().and_then(|g| g.stream()).is_some();
+        // Counted from before the key exchange, so the exchange spends the UDP NAT test's own
+        // wait rather than replacing it: the test runs beside both.
+        let udp_nat_wait_from = Instant::now();
+        let mut exchanged = false;
+        if carries_offer {
+            // An offer puts both sides' ICE candidates, every interface address of both
+            // machines, on this socket, so it goes out only once the server's key exchange has
+            // encrypted it. When the server does not complete one, an hbbs from before the
+            // exchange, the offer is dropped and this becomes a punch without WebRTC, on a fresh
+            // socket since the failed exchange may have consumed a message on this one. Degrade
+            // to no WebRTC, never to WebRTC signalling in the clear.
+            match secure_tcp_required(&mut socket, &key).await {
+                Ok(()) => exchanged = true,
+                Err(err) => {
+                    log::warn!(
+                        "WebRTC signalling to {} cannot be encrypted, punching without WebRTC: {}",
+                        rendezvous_server,
+                        err
+                    );
+                    webrtc_offerer = None;
+                    socket = connect_tcp(&*rendezvous_server, CONNECT_TIMEOUT).await?;
+                    my_addr = socket.local_addr();
+                }
+            }
+        }
+        if !exchanged && legacy_secure {
             secure_tcp(&mut socket, &key)
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
-        } else if let Some(udp) = udp.1.as_ref() {
-            let tm = Instant::now();
+        }
+        // A token or switch code has always taken this socket straight to the punch without
+        // waiting for the UDP NAT test. The WebRTC exchange does not replace that wait, it only
+        // spends part of the same budget, so what is left of it is waited out here and a result
+        // that has already arrived is taken at once.
+        if let Some(udp) = udp.1.as_ref().filter(|_| !legacy_secure) {
+            let tm = udp_nat_wait_from;
             // rtt is the TCP connect time. When it is too short to be a real WAN round trip it
             // says nothing about the UDP path (a TUN VPN or the LAN gateway answered the
             // handshake, not the server), so fall back to the flat grace; otherwise trust it.
@@ -1679,7 +1714,9 @@ impl Client {
                 let bytes = res?;
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::SignedId(si)) = msg_in.union {
-                        if let Ok((id, their_pk_b, signed_fp)) = decode_id_pk_dtls(&si.id, &sign_pk) {
+                        if let Ok((id, their_pk_b, signed_fp, kx_version)) =
+                            decode_id_pk_dtls(&si.id, &sign_pk)
+                        {
                             if id == peer_id {
                                 // WebRTC only: bind the DTLS channel to the verified peer identity.
                                 // webrtc-rs already bound the certificate to the remote SDP, so
@@ -1689,20 +1726,37 @@ impl Client {
                                     let actual_fp = conn.dtls_fingerprint(false).await.ok_or_else(
                                         || anyhow!("WebRTC DTLS fingerprint unavailable"),
                                     )?;
-                                    if signed_fp.is_empty() || signed_fp != actual_fp {
+                                    if !dtls_fingerprint_bound(&signed_fp, &actual_fp) {
                                         bail!("WebRTC DTLS fingerprint not bound to peer identity (possible MITM)");
                                     }
                                 }
                                 let (asymmetric_value, symmetric_value, key) =
                                     create_symmetric_key_msg(their_pk_b);
+                                // A WebRTC stream is encrypted by DTLS and takes no stream
+                                // key of its own, split or not, so the pick says what runs: 0.
+                                let picked = if is_webrtc {
+                                    0
+                                } else {
+                                    hbb_common::tcp::kx_version_for(kx_version)
+                                };
                                 let mut msg_out = Message::new();
                                 msg_out.set_public_key(PublicKey {
-                                    asymmetric_value,
+                                    asymmetric_value: asymmetric_value.clone(),
                                     symmetric_value,
+                                    kx_version: picked,
                                     ..Default::default()
                                 });
                                 timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
-                                conn.set_key(key);
+                                conn.set_negotiated_key(
+                                    key,
+                                    true,
+                                    &hbb_common::tcp::KxTranscript {
+                                        initiator_pk: &asymmetric_value,
+                                        responder_pk: &their_pk_b,
+                                        advertised: kx_version,
+                                        picked,
+                                    },
+                                )?;
                             } else {
                                 if is_webrtc {
                                     bail!("WebRTC handshake id mismatch (possible MITM)");
@@ -2129,6 +2183,8 @@ pub struct AudioHandler {
     device_channel: u16,
     #[cfg(not(target_os = "linux"))]
     playback_status: Arc<audio_playback::AudioPlaybackStatus>,
+    #[cfg(target_os = "windows")]
+    playback_recovery: audio_playback_recovery::PlaybackRecovery,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -2296,7 +2352,9 @@ impl AudioBuffer {
         let occupied = lock.occupied_len();
         drop(lock);
         if let Some((discarded, generation)) = discard {
-            log::debug!(
+            hbb_common::throttled_log!(
+                audio_playback::AUDIO_PLAYBACK_LOG_INTERVAL,
+                debug,
                 "Audio buffer capacity discard: samples={discarded}, generation={generation}"
             );
         }
@@ -2393,9 +2451,9 @@ impl AudioHandler {
         log::info!("Remote input format: {:?}", format0);
         #[allow(unused_mut)]
         let mut config: StreamConfig = config.into();
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            // this makes ios audio output not work
+            // this makes ios and android audio output not work
             config.buffer_size = cpal::BufferSize::Fixed(64);
         }
 
@@ -2434,22 +2492,53 @@ impl AudioHandler {
 
     /// Handle audio format and create an audio decoder.
     pub fn handle_format(&mut self, f: AudioFormat) {
+        self.handle_format_with_start(f, Self::start_audio);
+    }
+
+    fn handle_format_with_start(
+        &mut self,
+        f: AudioFormat,
+        start: impl FnOnce(&mut Self, AudioFormat) -> ResultType<()>,
+    ) {
         if !is_supported_audio_channel_count(f.channels) {
             log::error!("Unsupported audio channel count: {}", f.channels);
             return;
         }
         match AudioDecoder::new(f.sample_rate, if f.channels > 1 { Stereo } else { Mono }) {
             Ok(d) => {
+                #[cfg(target_os = "windows")]
+                let playback_failed = self.cancel_pending_playback();
                 #[cfg(target_os = "linux")]
                 let keep_existing_stream = self.simple.is_some()
                     && self.sample_rate.0 == f.sample_rate
                     && u32::from(self.channels) == f.channels;
                 #[cfg(not(target_os = "linux"))]
-                let keep_existing_stream = false;
+                let keep_existing_stream = self.audio_stream.is_some()
+                    && self.sample_rate.0 == f.sample_rate
+                    && u32::from(self.channels) == f.channels;
                 let buffer = vec![0.; f.sample_rate as usize * f.channels as usize];
+                #[cfg(not(target_os = "linux"))]
+                let mut previous = std::mem::take(self);
+                #[cfg(target_os = "windows")]
+                self.prepare_playback(&f);
                 self.audio_decoder = Some((d, buffer));
                 self.channels = f.channels as _;
-                let result = self.start_audio(f);
+                let result = start(self, f);
+                #[cfg(target_os = "windows")]
+                let keep_existing_stream = keep_existing_stream
+                    && !playback_failed
+                    && !previous.playback_recovery.report_pending();
+                #[cfg(not(target_os = "linux"))]
+                if result.is_err() && keep_existing_stream {
+                    // The restarted capture has new Opus history even when output startup fails.
+                    previous.audio_decoder = self.audio_decoder.take();
+                    *self = previous;
+                    self.handle_audio_start_result(result, true);
+                    return;
+                }
+                #[cfg(target_os = "windows")]
+                self.finish_playback_replacement(result, keep_existing_stream.then_some(previous));
+                #[cfg(not(target_os = "windows"))]
                 self.handle_audio_start_result(result, keep_existing_stream);
             }
             Err(err) => {
@@ -2487,7 +2576,7 @@ impl AudioHandler {
         }
         #[cfg(target_os = "linux")]
         if self.simple.is_none() {
-            log::debug!("PulseAudio simple binding does not exists");
+            log::trace!("PulseAudio simple binding does not exists");
             return;
         }
         self.audio_decoder.as_mut().map(|(d, buffer)| {
@@ -2537,6 +2626,9 @@ impl AudioHandler {
         device: &Device,
     ) -> ResultType<()> {
         self.device_channel = config.channels;
+        #[cfg(target_os = "windows")]
+        let err_fn = self.playback_recovery.new_error_callback();
+        #[cfg(not(target_os = "windows"))]
         let err_fn = move |err| {
             // too many errors, will improve later
             log::trace!("an error occurred on stream: {}", err);
@@ -4109,7 +4201,11 @@ pub fn start_audio_thread() -> MediaSender {
     std::thread::spawn(move || {
         let mut audio_handler = AudioHandler::default();
         loop {
-            if let Ok(data) = audio_receiver.recv() {
+            #[cfg(target_os = "windows")]
+            let received = audio_handler.receive_audio(&audio_receiver);
+            #[cfg(not(target_os = "windows"))]
+            let received = audio_receiver.recv();
+            if let Ok(data) = received {
                 match data {
                     MediaData::AudioFrame(af) => {
                         audio_handler.handle_frame(*af);
@@ -5761,5 +5857,144 @@ mod webrtc_race_tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("webrtc dead") && err.contains("relay dead"), "{}", err);
+    }
+}
+
+#[cfg(test)]
+mod kx_tests {
+    use super::*;
+    use hbb_common::{
+        sodiumoxide::crypto::box_,
+        tcp::{Encrypt, FramedStream, KxTranscript, KX_VERSION_LATEST},
+    };
+
+    const PEER_ID: &str = "123456789";
+
+    /// What the stand-in controlled peer saw: the version the controller picked, and whether the
+    /// controller's first application message decrypted.
+    struct Seen {
+        picked: u32,
+        decrypted: bool,
+    }
+
+    fn test_delay(time: i64) -> Message {
+        let mut msg = Message::new();
+        msg.set_test_delay(TestDelay {
+            time,
+            ..Default::default()
+        });
+        msg
+    }
+
+    fn delay_in(bytes: &[u8]) -> Option<i64> {
+        match Message::parse_from_bytes(bytes).ok()?.union? {
+            message::Union::TestDelay(t) => Some(t.time),
+            _ => None,
+        }
+    }
+
+    /// A stand-in controlled peer on loopback. It advertises `advertised` in its signed identity
+    /// and runs the key under `run`, or under the version the controller picked when `run` is
+    /// `None`, then sends one message and reads one. Returns the host, its identity as the
+    /// rendezvous server would sign it, and what it saw.
+    async fn controlled_stub(
+        advertised: u32,
+        run: Option<u32>,
+        rs_sk: sign::SecretKey,
+    ) -> (String, Vec<u8>, oneshot::Receiver<Seen>) {
+        let (sign_pk, sign_sk) = sign::gen_keypair();
+        let id_pk = |pk: &[u8], kx_version| {
+            IdPk {
+                id: PEER_ID.to_owned(),
+                pk: pk.to_vec().into(),
+                kx_version,
+                ..Default::default()
+            }
+            .write_to_bytes()
+            .unwrap()
+        };
+        let signed_id_pk = sign::sign(&id_pk(&sign_pk.0, 0), &rs_sk);
+        let listener = hbb_common::tcp::new_listener("127.0.0.1:0", false)
+            .await
+            .unwrap();
+        let host = listener.local_addr().unwrap().to_string();
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let (stream, addr) = listener.accept().await.unwrap();
+            let mut s = FramedStream::from(stream, addr);
+            let (our_pk_b, our_sk_b) = box_::gen_keypair();
+            let mut msg = Message::new();
+            msg.set_signed_id(SignedId {
+                id: sign::sign(&id_pk(&our_pk_b.0, advertised), &sign_sk).into(),
+                ..Default::default()
+            });
+            s.send(&msg).await.unwrap();
+            let bytes = s.next().await.unwrap().unwrap();
+            let Some(message::Union::PublicKey(pk)) =
+                Message::parse_from_bytes(&bytes).unwrap().union
+            else {
+                panic!("expected the controller's public key");
+            };
+            let key =
+                Encrypt::decode(&pk.symmetric_value, &pk.asymmetric_value, &our_sk_b).unwrap();
+            let t = KxTranscript {
+                initiator_pk: &pk.asymmetric_value,
+                responder_pk: &our_pk_b.0,
+                advertised,
+                picked: run.unwrap_or(pk.kx_version),
+            };
+            if t.picked == 0 {
+                s.set_key(key);
+            } else {
+                s.set_key_split(key, false, &t).unwrap();
+            }
+            s.send(&test_delay(2)).await.unwrap();
+            let decrypted = matches!(s.next().await, Some(Ok(b)) if delay_in(&b) == Some(1));
+            tx.send(Seen {
+                picked: pk.kx_version,
+                decrypted,
+            })
+            .ok();
+        });
+        (host, signed_id_pk, rx)
+    }
+
+    /// The controller's handshake against the stub, then one application message each way.
+    /// Returns what the stub saw and whether the stub's message decrypted on this side.
+    async fn handshake(advertised: u32, run: Option<u32>) -> (Seen, bool) {
+        let (rs_pk, rs_sk) = sign::gen_keypair();
+        let (host, signed_id_pk, seen) = controlled_stub(advertised, run, rs_sk).await;
+        let mut conn = connect_tcp(host, 3000).await.unwrap();
+        let pk =
+            Client::secure_connection(PEER_ID, signed_id_pk, &crate::encode64(rs_pk.0), &mut conn)
+                .await
+                .unwrap();
+        assert!(pk.is_some() && conn.is_secured());
+        conn.send(&test_delay(1)).await.unwrap();
+        let decrypted = matches!(conn.next().await, Some(Ok(b)) if delay_in(&b) == Some(2));
+        (seen.await.unwrap(), decrypted)
+    }
+
+    #[tokio::test]
+    async fn test_new_peers_pick_version_1_and_exchange_application_data() {
+        let (seen, decrypted) = handshake(KX_VERSION_LATEST, None).await;
+        assert_eq!(seen.picked, 1);
+        assert!(seen.decrypted && decrypted);
+    }
+
+    #[tokio::test]
+    async fn test_a_peer_without_versions_gets_version_0() {
+        let (seen, decrypted) = handshake(0, Some(0)).await;
+        assert_eq!(seen.picked, 0);
+        assert!(seen.decrypted && decrypted);
+    }
+
+    #[tokio::test]
+    async fn test_a_pick_lowered_in_transit_decrypts_nothing() {
+        // The controlled side takes 0 from a controller without versions, so a lowered pick is
+        // caught by the keys disagreeing on the first application message, not before.
+        let (seen, decrypted) = handshake(KX_VERSION_LATEST, Some(0)).await;
+        assert_eq!(seen.picked, 1);
+        assert!(!seen.decrypted && !decrypted);
     }
 }

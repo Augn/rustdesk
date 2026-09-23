@@ -105,6 +105,16 @@ fn load_plugin_in_app_path(dll_name: &str) -> Result<Library, LibError> {
 #[cfg(not(windows))]
 #[no_mangle]
 pub extern "C" fn rustdesk_core_main() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use hbb_common::libc;
+
+        // Native runners bypass Rust's startup, which normally ignores SIGPIPE.
+        if unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) } == libc::SIG_ERR {
+            eprintln!("Failed to ignore SIGPIPE: {}", std::io::Error::last_os_error());
+            std::process::exit(1);
+        }
+    }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if crate::core_main::core_main().is_some() {
         return true;
@@ -642,7 +652,7 @@ impl FlutterHandler {
 
 impl InvokeUiSession for FlutterHandler {
     fn set_cursor_data(&self, cd: CursorData) {
-        let colors = hbb_common::compress::decompress(&cd.colors);
+        let colors = &cd.colors;
         self.push_event(
             "cursor_data",
             &[
