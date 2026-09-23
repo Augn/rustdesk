@@ -1,0 +1,100 @@
+name: Package signed Windows app
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-sha:
+        description: Git commit used by the Windows app build
+        required: true
+        type: string
+      payload-tag:
+        description: Draft release tag holding the signed app archives
+        required: true
+        type: string
+      x64-sha256:
+        description: SHA-256 of the signed x86_64 app archive
+        required: true
+        type: string
+      arm64-sha256:
+        description: SHA-256 of the signed aarch64 app archive
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { arch: x86_64, os: windows-2022, platform: x64 }
+          - { arch: aarch64, os: windows-11-arm, platform: ARM64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
+
+      - name: Download and verify signed app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ matrix.job.arch == 'aarch64' && inputs.arm64-sha256 || inputs.x64-sha256 }}
+        run: |
+          $archive = 'omendesk-signed-app-${{ matrix.job.arch }}.zip'
+          gh release download '${{ inputs.payload-tag }}' --repo $env:GITHUB_REPOSITORY --pattern $archive --dir .
+          if ($LASTEXITCODE -ne 0) { throw 'Signed app download failed' }
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $env:EXPECTED_SHA256) { throw 'Signed app archive hash mismatch' }
+          Expand-Archive $archive -DestinationPath .
+          foreach ($file in 'rustdesk.exe', 'librustdesk.dll') {
+            $path = Join-Path rustdesk $file
+            if (-not (Test-Path $path)) { throw "Missing signed file: $path" }
+            $signature = Get-AuthenticodeSignature $path
+            if ($signature.Status -ne 'Valid' -or
+                $signature.SignerCertificate.Thumbprint -ne 'D95F12062FFD578313E66D465879F0F20C52E8B5' -or
+                -not $signature.TimeStamperCertificate) { throw "Invalid Omendesk signature: $path" }
+          }
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: '1.75'
+          targets: ${{ matrix.job.arch }}-pc-windows-msvc
+
+      - name: Build portable executable
+        shell: bash
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd libs/portable
+          pip3 install -r requirements.txt
+          python3 generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mkdir -p SignOutput
+          mv target/release/rustdesk-portable-packer.exe SignOutput/rustdesk-1.5.1-${{ matrix.job.arch }}.exe
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+        with:
+          msbuild-architecture: ${{ matrix.job.arch == 'aarch64' && 'arm64' || 'x86' }}
+
+      - name: Build MSI
+        run: |
+          Push-Location res/msi
+          python preprocess.py --arp -d ../../rustdesk --app-name omendesk --exe-name rustdesk --preserve-component-guids
+          if ($LASTEXITCODE -ne 0) { throw 'MSI preprocessing failed' }
+          nuget restore msi.sln
+          if ($LASTEXITCODE -ne 0) { throw 'NuGet restore failed' }
+          msbuild msi.sln -p:Configuration=Release -p:Platform=${{ matrix.job.platform }} /p:TargetVersion=Windows10
+          if ($LASTEXITCODE -ne 0) { throw 'MSI build failed' }
+          $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
+          if (-not $msi) { throw 'MSI output is missing' }
+          Move-Item $msi.FullName ../../SignOutput/rustdesk-1.5.1-${{ matrix.job.arch }}.msi
+          Pop-Location
+
+      - name: Upload packages for local signing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omendesk-packages-${{ matrix.job.arch }}
+          path: SignOutput

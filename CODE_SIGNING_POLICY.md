@@ -20,8 +20,9 @@ true:
 - The application binaries are built by this repository's GitHub Actions
   workflows on GitHub-hosted runners and downloaded from that run.
 - The maintainer signs project-owned Windows executables and libraries locally
-  with the Certum smart card, then packages the signed files into the portable
-  executable and MSI. The same certificate signs both outer packages.
+  with the Certum smart card. GitHub Actions verifies those files and packages
+  them into the portable executable and MSI. The maintainer then signs both
+  outer packages with the same certificate.
 - SHA-256 Authenticode signatures have RFC 3161 timestamps. The maintainer
   verifies the signer, timestamp, package signatures, and release hashes
   before publication.
