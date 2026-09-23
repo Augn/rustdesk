@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       payload-tag:
-        description: Draft release tag holding the signed app archives
+        description: Staging prerelease tag holding the signed app archives
         required: true
         type: string
       x64-sha256:
