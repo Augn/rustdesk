@@ -7,6 +7,10 @@ on:
         description: "Build and publish only the macOS packages"
         type: boolean
         default: false
+      windows-signing-candidate:
+        description: "Build Windows packages for local hardware-token signing without publishing"
+        type: boolean
+        default: false
   # Automatic triggers disabled; run manually only.
   # push:
   #   tags:
@@ -23,3 +27,4 @@ jobs:
       upload-artifact: true
       upload-tag: ${{ github.ref_name }}
       macos-only: ${{ inputs.macos-only }}
+      windows-signing-candidate: ${{ inputs.windows-signing-candidate }}
