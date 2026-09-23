@@ -969,9 +969,20 @@ impl Client {
         let mut reconnect_rendezvous = false;
         'punch_attempts: for i in 1..=3 {
             if reconnect_rendezvous {
-                socket = match Self::connect_rendezvous(&rendezvous_server, &key, secure_rendezvous)
-                    .await
-                {
+                let reconnect: ResultType<Stream> = async {
+                    let mut socket = Self::connect_rendezvous(
+                        &rendezvous_server,
+                        &key,
+                        legacy_secure && !exchanged,
+                    )
+                    .await?;
+                    if exchanged {
+                        secure_tcp_required(&mut socket, &key).await?;
+                    }
+                    Ok(socket)
+                }
+                .await;
+                socket = match reconnect {
                     Ok(socket) => {
                         reconnect_rendezvous = false;
                         socket
