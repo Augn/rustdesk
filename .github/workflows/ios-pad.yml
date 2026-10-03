@@ -1,0 +1,157 @@
+name: iPad IPA Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: "Release source ref to build"
+        type: string
+        default: "1.5.1"
+        required: true
+      bridge-run-id:
+        description: "Successful source build run containing the matching bridge-artifact"
+        type: string
+        default: "35885121706"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RUST_VERSION: "1.75"
+  FLUTTER_VERSION: "3.24.5"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+
+jobs:
+  build-ipad-ipa:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source-ref }}
+          submodules: recursive
+
+      - name: Verify bridge source
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
+        env:
+          BRIDGE_RUN_ID: ${{ inputs.bridge-run-id }}
+        with:
+          script: |
+            const runId = Number(process.env.BRIDGE_RUN_ID);
+            if (!Number.isSafeInteger(runId) || runId <= 0) {
+              throw new Error('bridge-run-id must be a positive integer');
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: runId,
+            });
+            let sourceSha = '';
+            await exec.exec('git', ['rev-parse', 'HEAD'], {
+              listeners: { stdout: data => sourceSha += data.toString() },
+            });
+            if (run.conclusion !== 'success' || run.head_sha !== sourceSha.trim()) {
+              throw new Error('Bridge must come from a successful build of the exact source commit');
+            }
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install dependencies
+        run: |
+          xcodebuild -version
+          brew install nasm yasm
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Patch Flutter
+        run: |
+          cd "$(dirname "$(dirname "$(which flutter)")")"
+          git apply "$GITHUB_WORKSPACE/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Build iOS dependencies
+        run: |
+          "$VCPKG_ROOT/vcpkg" install --triplet arm64-ios --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-apple-ios
+          components: rustfmt
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          prefix-key: rustdesk-lib-cache-ios
+          key: aarch64-apple-ios
+
+      - name: Restore matching bridge
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: bridge-artifact
+          path: ./
+          run-id: ${{ inputs.bridge-run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Build Rust library
+        run: |
+          cargo build --locked --features flutter,hwcodec --release --target aarch64-apple-ios --lib
+
+      - name: Build unsigned iOS archive
+        run: |
+          cd flutter
+          flutter build ipa --release --no-codesign
+
+      - name: Verify iPad app and package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_DIR=flutter/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app
+          test -d "$APP_DIR"
+          test "$(xcrun lipo -archs "$APP_DIR/Runner")" = arm64
+          mkdir -p ipad-ipa
+          APP_DIR="$APP_DIR" python3 - <<'PY'
+          import json, os, plistlib
+          from pathlib import Path
+          app = Path(os.environ['APP_DIR'])
+          info = plistlib.loads((app / 'Info.plist').read_bytes())
+          assert 2 in info['UIDeviceFamily'], 'iPad support missing'
+          assert info['CFBundleIdentifier'] == 'com.carriez.omendesk'
+          assert info['CFBundleDisplayName'] == 'omendesk'
+          assert info['CFBundleShortVersionString'] == '1.5.1'
+          assert str(info['CFBundleVersion']) == '70'
+          assert not (app / 'embedded.mobileprovision').exists()
+          record = {key: info.get(key) for key in (
+              'CFBundleIdentifier', 'CFBundleDisplayName', 'CFBundleShortVersionString',
+              'CFBundleVersion', 'UIDeviceFamily', 'MinimumOSVersion', 'CFBundleExecutable')}
+          record['signing'] = 'unsigned - requires signing for sideloading'
+          Path('ipad-ipa/IPAD_APP_INFO.json').write_text(json.dumps(record, indent=2) + '\n')
+          print(json.dumps(record))
+          PY
+          xcrun vtool -show-build "$APP_DIR/Runner" > ipad-ipa/IOS_BUILD_VERSION.txt
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/Payload"
+          cp -R "$APP_DIR" "$STAGE/Payload/"
+          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/ipad-ipa/omendesk-1.5.1-aarch64-ios-unsigned.ipa" Payload)
+          unzip -tq ipad-ipa/omendesk-1.5.1-aarch64-ios-unsigned.ipa
+          git rev-parse HEAD > ipad-ipa/SOURCE_COMMIT.txt
+          shasum -a 256 ipad-ipa/omendesk-1.5.1-aarch64-ios-unsigned.ipa > ipad-ipa/SHA256SUMS.txt
+
+      - name: Upload unsigned iPad IPA
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ipad-ipa-1.5.1
+          path: ipad-ipa/
+          if-no-files-found: error
