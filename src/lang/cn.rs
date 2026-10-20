@@ -817,5 +817,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Off", "关"),
         ("api_server_connection_tip", "自定义服务器正在使用未加密的 HTTP。请联系管理员启用 HTTPS。"),
         ("api_server_empty_tip", "API 服务器留空时，自定义服务器默认使用 HTTP。请联系管理员启用 HTTPS。"),
+        ("sync-clipboard-between-sessions-default-tip", "默认启用，在同一客户端已连接且允许相关权限的会话之间同步文字、图片，以及支持的文件和文件夹。文件转发需要远程两端使用支持的新客户端并开启文件复制粘贴。"),
     ].iter().cloned().collect();
 }

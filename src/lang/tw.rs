@@ -817,5 +817,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Off", ""),
         ("api_server_connection_tip", "自訂伺服器正在使用未加密的 HTTP。請聯絡管理員啟用 HTTPS。"),
         ("api_server_empty_tip", "API 伺服器留空時，自訂伺服器預設使用 HTTP。請聯絡管理員啟用 HTTPS。"),
+        ("sync-clipboard-between-sessions-default-tip", "預設啟用，在同一用戶端已連線且允許相關權限的工作階段之間同步文字、圖片，以及支援的檔案和資料夾。檔案轉送需要遠端兩端使用支援的新用戶端並啟用檔案複製貼上。"),
     ].iter().cloned().collect();
 }

@@ -636,12 +636,19 @@ class _GeneralState extends State<_General> {
       if (!incomingOnly) ...webrtcOptions(context),
       if (!isWeb && !incomingOnly)
         Tooltip(
-          message: translate('sync-clipboard-between-sessions-tip'),
+          message: translate('sync-clipboard-between-sessions-default-tip'),
           child: _OptionCheckBox(
             context,
             'Sync clipboard between sessions',
             kOptionAllowSyncClipboardBetweenSessions,
             isServer: false,
+            optGetter: () {
+              final value = bind.mainGetLocalOption(
+                  key: kOptionAllowSyncClipboardBetweenSessions);
+              return value.isEmpty || value == 'Y';
+            },
+            optSetter: (key, value) =>
+                bind.mainSetLocalOption(key: key, value: value ? 'Y' : 'N'),
           ),
         ),
     ];

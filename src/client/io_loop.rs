@@ -93,6 +93,12 @@ pub struct Remote<T: InvokeUiSession> {
     first_frame: bool,
     #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
     client_conn_id: i32, // used for file clipboard
+    #[cfg(all(
+        feature = "flutter",
+        not(any(target_os = "android", target_os = "ios")),
+        any(target_os = "windows", feature = "unix-file-copy-paste")
+    ))]
+    clipboard_relay_id: u64,
     data_count: Arc<AtomicUsize>,
     video_format: CodecFormat,
     elevation_requested: bool,
@@ -143,6 +149,12 @@ impl<T: InvokeUiSession> Remote<T> {
             first_frame: false,
             #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
             client_conn_id: 0,
+            #[cfg(all(
+                feature = "flutter",
+                not(any(target_os = "android", target_os = "ios")),
+                any(target_os = "windows", feature = "unix-file-copy-paste")
+            ))]
+            clipboard_relay_id: 0,
             data_count: Arc::new(AtomicUsize::new(0)),
             video_format: CodecFormat::Unknown,
             stop_voice_call_sender: None,
@@ -329,6 +341,12 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
                         }
                         _ = status_timer.tick() => {
+                            #[cfg(all(
+                                feature = "flutter",
+                                not(any(target_os = "android", target_os = "ios")),
+                                any(target_os = "windows", feature = "unix-file-copy-paste")
+                            ))]
+                            crate::clipboard_file::session_relay::refresh();
                             if self.handler.is_restarting_remote_device()
                                 && last_recv_time.elapsed() >= RESTART_REMOTE_DEVICE_NO_DATA_TIMEOUT
                             {
@@ -431,6 +449,12 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     fn handle_disconnected(&self, round: u32) {
+        #[cfg(all(
+            feature = "flutter",
+            not(any(target_os = "android", target_os = "ios")),
+            any(target_os = "windows", feature = "unix-file-copy-paste")
+        ))]
+        crate::clipboard_file::session_relay::disconnect(self.clipboard_relay_id);
         // set_disconnected_ok is used to check if new connection round is started.
         let _set_disconnected_ok = self
             .handler
@@ -477,6 +501,12 @@ impl<T: InvokeUiSession> Remote<T> {
                     log::debug!("Discarding local file clipboard message before login");
                 }
                 _ => {
+                    #[cfg(all(feature = "flutter", not(any(target_os = "android", target_os = "ios"))))]
+                    if !crate::clipboard_file::session_relay::from_local(
+                        self.clipboard_relay_id, &clip,
+                    ) {
+                        return;
+                    }
                     let is_stopping_allowed = clip.is_stopping_allowed();
                     let server_file_transfer_enabled =
                         *self.handler.server_file_transfer_enabled.read().unwrap();
@@ -757,6 +787,31 @@ impl<T: InvokeUiSession> Remote<T> {
                     allow_err!(peer.send(&msg).await);
                 }
             }
+            #[cfg(all(
+                feature = "flutter",
+                not(any(target_os = "android", target_os = "ios")),
+                any(target_os = "windows", feature = "unix-file-copy-paste")
+            ))]
+            Data::ClipboardRelay(queued) => {
+                if self.is_connected {
+                    if let Some((clip, local)) =
+                        crate::clipboard_file::session_relay::prepare(self.clipboard_relay_id, queued)
+                    {
+                        self.initial_clipboard_pending = false;
+                        if local {
+                            for msg in crate::clipboard_file::session_relay::deliver_local(
+                                self.clipboard_relay_id, clip,
+                            ) {
+                                allow_err!(peer.send(&msg).await);
+                            }
+                        } else {
+                            allow_err!(peer
+                                .send(&crate::clipboard_file::session_relay::message(clip))
+                                .await);
+                        }
+                    }
+                }
+            }
             Data::Message(msg) => {
                 // The Flutter clipboard broadcast is process-wide, so a clipboard can reach this
                 // round's queue before the round has logged in; it is dropped here, on the round
@@ -770,6 +825,20 @@ impl<T: InvokeUiSession> Remote<T> {
                     )
                 {
                     return true;
+                }
+                #[cfg(all(
+                    feature = "flutter",
+                    not(any(target_os = "android", target_os = "ios")),
+                    any(target_os = "windows", feature = "unix-file-copy-paste")
+                ))]
+                if self.is_connected {
+                    if let Some(message::Union::Cliprdr(clip)) = &msg.union {
+                        if crate::clipboard_file::session_relay::from_local_message(
+                            self.clipboard_relay_id, clip.clone(),
+                        ).is_none() {
+                            return true;
+                        }
+                    }
                 }
                 match &msg.union {
                     Some(message::Union::Cliprdr(_)) if !self.is_connected => {
@@ -1646,6 +1715,19 @@ impl<T: InvokeUiSession> Remote<T> {
                         }
 
                         self.is_connected = true;
+                        #[cfg(all(
+                            feature = "flutter",
+                            not(any(target_os = "android", target_os = "ios")),
+                            any(target_os = "windows", feature = "unix-file-copy-paste")
+                        ))]
+                        if self.handler.is_default() && self.clipboard_relay_id == 0 {
+                            self.clipboard_relay_id =
+                                crate::clipboard_file::session_relay::register(
+                                    self.client_conn_id,
+                                    self.handler.get_permission_config(),
+                                    self.sender.clone(),
+                                );
+                        }
                     }
                     _ => {}
                 },
@@ -1688,6 +1770,12 @@ impl<T: InvokeUiSession> Remote<T> {
                     if clipboard_allowed {
                         #[cfg(all(
                             feature = "flutter",
+                            not(any(target_os = "android", target_os = "ios")),
+                            any(target_os = "windows", feature = "unix-file-copy-paste")
+                        ))]
+                        crate::clipboard_file::session_relay::clear();
+                        #[cfg(all(
+                            feature = "flutter",
                             not(any(target_os = "android", target_os = "ios"))
                         ))]
                         if self.handler.is_text_clipboard_required()
@@ -1724,6 +1812,12 @@ impl<T: InvokeUiSession> Remote<T> {
                         !lc.disable_clipboard.v && !lc.view_only.v
                     };
                     if clipboard_allowed {
+                        #[cfg(all(
+                            feature = "flutter",
+                            not(any(target_os = "android", target_os = "ios")),
+                            any(target_os = "windows", feature = "unix-file-copy-paste")
+                        ))]
+                        crate::clipboard_file::session_relay::clear();
                         #[cfg(all(
                             feature = "flutter",
                             not(any(target_os = "android", target_os = "ios"))
@@ -2572,6 +2666,15 @@ impl<T: InvokeUiSession> Remote<T> {
             return;
         }
         log::debug!("handling cliprdr msg from server peer");
+        #[cfg(all(feature = "flutter", not(any(target_os = "android", target_os = "ios"))))]
+        let Some(clip) = crate::clipboard_file::session_relay::from_peer(
+            self.clipboard_relay_id,
+            clip,
+            self.client_conn_id
+                == clipboard::get_client_conn_id(&crate::flutter::get_cur_peer_id()).unwrap_or(0),
+        ) else {
+            return;
+        };
         #[cfg(feature = "flutter")]
         if let Some(base::message_proto::cliprdr::Union::FormatList(_)) = &clip.union {
             if self.client_conn_id
@@ -2646,6 +2749,14 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
 
                 for msg in out_msgs.into_iter() {
+                    #[cfg(all(feature = "flutter", not(any(target_os = "android", target_os = "ios"))))]
+                    if let Some(message::Union::Cliprdr(clip)) = msg.union.as_ref() {
+                        if crate::clipboard_file::session_relay::from_local_message(
+                            self.clipboard_relay_id, clip.clone(),
+                        ).is_none() {
+                            continue;
+                        }
+                    }
                     allow_err!(_peer.send(&msg).await);
                 }
             }

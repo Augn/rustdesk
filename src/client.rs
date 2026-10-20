@@ -5036,6 +5036,12 @@ pub enum Data {
     RejectInsecureConnection,
     Login((String, String, String, bool)),
     Message(Message),
+    #[cfg(all(
+        feature = "flutter",
+        not(any(target_os = "android", target_os = "ios")),
+        any(target_os = "windows", feature = "unix-file-copy-paste")
+    ))]
+    ClipboardRelay(crate::clipboard_file::session_relay::QueuedMessage),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     InitialClipboard(usize, Option<Message>),
     SendFiles((i32, JobType, String, String, i32, bool, bool)),

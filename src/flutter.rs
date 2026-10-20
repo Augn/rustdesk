@@ -1453,6 +1453,13 @@ pub fn update_file_clipboard_required() {
 
 #[cfg(not(target_os = "ios"))]
 pub fn send_clipboard_msg(msg: Message, _is_file: bool) {
+    #[cfg(all(
+        not(any(target_os = "android", target_os = "ios")),
+        any(target_os = "windows", feature = "unix-file-copy-paste")
+    ))]
+    if !_is_file {
+        crate::clipboard_file::session_relay::local_text_changed();
+    }
     send_clipboard_msg_impl(msg, _is_file, None);
 }
 

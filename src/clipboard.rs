@@ -19,10 +19,30 @@ pub const OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS: &str =
 
 #[cfg(all(feature = "flutter", not(any(target_os = "android", target_os = "ios"))))]
 pub fn is_sync_clipboard_between_sessions_enabled() -> bool {
-    hbb_common::config::option2bool(
-        OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS,
+    session_clipboard_sync_enabled(
         &hbb_common::config::LocalConfig::get_option(OPTION_ALLOW_SYNC_CLIPBOARD_BETWEEN_SESSIONS),
     )
+}
+
+#[cfg(any(
+    test,
+    all(feature = "flutter", not(any(target_os = "android", target_os = "ios")))
+))]
+fn session_clipboard_sync_enabled(value: &str) -> bool {
+    matches!(value, "" | "Y")
+}
+
+#[cfg(test)]
+mod session_clipboard_sync_tests {
+    use super::session_clipboard_sync_enabled;
+
+    #[test]
+    fn defaults_on_and_preserves_explicit_disable() {
+        assert!(session_clipboard_sync_enabled(""));
+        assert!(session_clipboard_sync_enabled("Y"));
+        assert!(!session_clipboard_sync_enabled("N"));
+        assert!(!session_clipboard_sync_enabled("invalid"));
+    }
 }
 
 // This format is used to store the flag in the clipboard.

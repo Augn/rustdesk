@@ -1,6 +1,22 @@
 use clipboard::ClipboardFile;
 use base::message_proto::*;
 
+#[cfg(any(
+    test,
+    all(
+        feature = "flutter",
+        not(any(target_os = "android", target_os = "ios")),
+        any(target_os = "windows", feature = "unix-file-copy-paste")
+    )
+))]
+mod relay;
+#[cfg(all(
+    feature = "flutter",
+    not(any(target_os = "android", target_os = "ios")),
+    any(target_os = "windows", feature = "unix-file-copy-paste")
+))]
+pub(crate) mod session_relay;
+
 pub fn clip_2_msg(clip: ClipboardFile) -> Message {
     match clip {
         ClipboardFile::NotifyCallback {

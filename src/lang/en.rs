@@ -292,5 +292,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("shortcut-key-not-supported", "\"{}\" can't be used as a shortcut."),
         ("api_server_connection_tip", "Your custom server uses unencrypted HTTP. Contact your administrator to enable HTTPS."),
         ("api_server_empty_tip", "With API Server empty, your custom server defaults to HTTP. Contact your administrator to enable HTTPS."),
+        ("sync-clipboard-between-sessions-default-tip", "Enabled by default. Sync text, images, and supported files and folders between connected sessions in this client when the relevant permissions are allowed. File forwarding requires compatible new clients on both remote computers with file copy and paste enabled."),
     ].iter().cloned().collect();
 }
