@@ -96,6 +96,7 @@ def artifact_metadata(spec, release_id, release_base_url):
 
 
 def command_sign(args):
+    key_id = validate_or_fail(validate_package_id, args.key_id)
     metadata_out = Path(args.metadata_out).resolve()
     signature_out = Path(args.signature_out).resolve()
     if metadata_out == signature_out:
@@ -119,12 +120,12 @@ def command_sign(args):
     artifacts.sort(key=lambda item: (item["platform"], item["arch"], item["format"]))
     metadata = {
         "schema_version": SCHEMA_VERSION,
-        "app": APP_NAME,
+        "app": args.app,
         "package_id": package_id,
         "version": args.version,
         "release_id": args.release_id,
         "published_at": args.published_at,
-        "signature_key_id": KEY_ID,
+        "signature_key_id": key_id,
         "artifacts": artifacts,
     }
     private_key = ed25519.Ed25519PrivateKey.from_private_bytes(decode_env(SEED_ENV, 32))
@@ -132,7 +133,7 @@ def command_sign(args):
     signature = {
         "schema_version": SCHEMA_VERSION,
         "algorithm": SIGNATURE_ALGORITHM,
-        "key_id": KEY_ID,
+        "key_id": key_id,
         "signature": base64.b64encode(
             private_key.sign(SIGNATURE_CONTEXT + metadata_bytes)
         ).decode("ascii"),
@@ -141,11 +142,11 @@ def command_sign(args):
     write_bytes(signature_out, stable_json(signature))
 
 
-def verify_metadata_signature(metadata_bytes, signature):
+def verify_metadata_signature(metadata_bytes, signature, key_id):
     if (
         signature.get("schema_version") != SCHEMA_VERSION
         or signature.get("algorithm") != SIGNATURE_ALGORITHM
-        or signature.get("key_id") != KEY_ID
+        or signature.get("key_id") != key_id
     ):
         fail("invalid signature metadata")
     public_key = ed25519.Ed25519PublicKey.from_public_bytes(decode_env(PUBLIC_KEY_ENV, 32))
@@ -190,21 +191,22 @@ def validated_artifacts(metadata, local_artifacts):
 
 
 def command_verify(args):
+    key_id = validate_or_fail(validate_package_id, args.key_id)
     metadata_bytes = Path(args.metadata).read_bytes()
     metadata = json.loads(metadata_bytes)
     signature = json.loads(Path(args.signature).read_bytes())
-    verify_metadata_signature(metadata_bytes, signature)
+    verify_metadata_signature(metadata_bytes, signature, key_id)
     package_id = validate_or_fail(validate_package_id, args.package_id)
     release_base_url = validate_or_fail(
         validate_release_base_url, args.release_base_url
     )
     expected_fields = {
         "schema_version": SCHEMA_VERSION,
-        "app": APP_NAME,
+        "app": args.app,
         "package_id": package_id,
         "version": args.version,
         "release_id": args.release_id,
-        "signature_key_id": KEY_ID,
+        "signature_key_id": key_id,
     }
     if any(metadata.get(key) != value for key, value in expected_fields.items()):
         fail("metadata does not match the release")
@@ -230,6 +232,7 @@ def command_verify(args):
 
 
 def command_check_key(args):
+    key_id = validate_or_fail(validate_package_id, args.key_id)
     seed = decode_env(SEED_ENV, 32)
     configured_key = decode_env(PUBLIC_KEY_ENV, 32)
     derived_key = ed25519.Ed25519PrivateKey.from_private_bytes(seed).public_key()
@@ -242,7 +245,7 @@ def command_check_key(args):
 
     source = Path(args.rust_source).read_text(encoding="utf-8")
     match = re.search(
-        rf'TrustedUpdateKey\s*\{{[^{{}}]*key_id:\s*"{KEY_ID}"[^{{}}]*public_key:\s*\[([^\]]+)\]',
+        rf'TrustedUpdateKey\s*\{{[^{{}}]*key_id:\s*"{re.escape(key_id)}"[^{{}}]*public_key:\s*\[([^\]]+)\]',
         source,
         re.S,
     )
@@ -262,6 +265,8 @@ def build_parser():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     sign = commands.add_parser("sign")
+    sign.add_argument("--app", choices=("rustdesk", "omendesk"), default=APP_NAME)
+    sign.add_argument("--key-id", default=KEY_ID)
     sign.add_argument("--artifact", action="append", nargs=4, required=True)
     sign.add_argument("--version", required=True)
     sign.add_argument("--release-id", required=True)
@@ -272,6 +277,8 @@ def build_parser():
     sign.add_argument("--signature-out", required=True)
     sign.set_defaults(func=command_sign)
     verify = commands.add_parser("verify")
+    verify.add_argument("--app", choices=("rustdesk", "omendesk"), default=APP_NAME)
+    verify.add_argument("--key-id", default=KEY_ID)
     verify.add_argument("--metadata", required=True)
     verify.add_argument("--signature", required=True)
     verify.add_argument("--artifact", action="append", required=True)
@@ -281,6 +288,7 @@ def build_parser():
     verify.add_argument("--release-base-url", required=True)
     verify.set_defaults(func=command_verify)
     check_key = commands.add_parser("check-key")
+    check_key.add_argument("--key-id", default=KEY_ID)
     check_key.add_argument(
         "--rust-source", default="src/update_metadata.rs"
     )

@@ -64,10 +64,12 @@ class GenerateUpdateMetadataTest(unittest.TestCase):
         package_id="rustdesk",
         release_base_url=OFFICIAL_RELEASE_BASE_URL,
         seed=None,
+        app="rustdesk",
+        key_id="2026-ed25519-main",
     ):
         metadata = self.root / "rustdesk-update.json"
         signature = self.root / "rustdesk-update.json.sig"
-        args = ["sign"]
+        args = ["sign", "--app", app, "--key-id", key_id]
         for platform, arch, file_format, path in artifacts:
             args.extend(["--artifact", platform, arch, file_format, str(path)])
         args.extend(
@@ -100,9 +102,15 @@ class GenerateUpdateMetadataTest(unittest.TestCase):
         public_key=None,
         package_id="rustdesk",
         release_base_url=OFFICIAL_RELEASE_BASE_URL,
+        app="rustdesk",
+        key_id="2026-ed25519-main",
     ):
         args = [
             "verify",
+            "--app",
+            app,
+            "--key-id",
+            key_id,
             "--metadata",
             str(metadata),
             "--signature",
@@ -123,11 +131,11 @@ class GenerateUpdateMetadataTest(unittest.TestCase):
             public_key=public_key or self.public_key,
         )
 
-    def rust_source(self, public_key=None):
+    def rust_source(self, public_key=None, key_id="2026-ed25519-main"):
         key_bytes = base64.b64decode(public_key or self.public_key)
         source = self.root / "update_metadata.rs"
         source.write_text(
-            'TrustedUpdateKey { key_id: "2026-ed25519-main", public_key: ['
+            'TrustedUpdateKey { key_id: "' + key_id + '", public_key: ['
             + ",".join(str(byte) for byte in key_bytes)
             + "] }",
             encoding="utf-8",
@@ -147,6 +155,32 @@ class GenerateUpdateMetadataTest(unittest.TestCase):
         data = json.loads(metadata.read_text(encoding="utf-8"))
         self.assertEqual(data["release_id"], "v1.4.6")
         self.assertEqual({item["file_name"] for item in data["artifacts"]}, {exe.name, dmg.name})
+
+    def test_signs_and_verifies_omendesk_release_identity(self):
+        artifact = self.artifact()
+        policy = {
+            "app": "omendesk",
+            "key_id": "2026-ed25519-omendesk",
+            "package_id": "omendesk",
+            "release_base_url": "https://github.com/Augn/rustdesk/releases/download",
+        }
+        metadata, signature, signed = self.sign(
+            [("windows", "x86_64", "exe", artifact)], **policy
+        )
+        self.assertEqual(signed.returncode, 0, signed.stderr)
+        verified = self.verify(metadata, signature, [artifact], **policy)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        data = json.loads(metadata.read_text(encoding="utf-8"))
+        self.assertEqual(data["app"], "omendesk")
+        self.assertEqual(data["signature_key_id"], policy["key_id"])
+        self.assertTrue(data["artifacts"][0]["url"].startswith(policy["release_base_url"] + "/v1.4.6/"))
+        self.assertNotEqual(self.verify(metadata, signature, [artifact]).returncode, 0)
+        checked = self.run_script(
+            "check-key", "--key-id", policy["key_id"],
+            "--rust-source", str(self.rust_source(key_id=policy["key_id"])),
+            seed=self.seed, public_key=self.public_key,
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
 
     def test_verification_rejects_tampering(self):
         artifact = self.artifact()

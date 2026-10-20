@@ -21,18 +21,18 @@ use artifact::{validate_artifact, validate_artifact_file_name, ArtifactUrlPolicy
 pub(crate) use offline::{verify_offline_update_metadata, OfflineUpdateMetadataRequirements};
 
 const UPDATE_METADATA_SIGNATURE_CONTEXT: &[u8] = b"RustDesk update metadata v1\n";
-const UPDATE_APP: &str = "rustdesk";
-pub(crate) const PUBLIC_UPDATE_PACKAGE_ID: &str = "rustdesk";
+const UPDATE_APP: &str = "omendesk";
+pub(crate) const PUBLIC_UPDATE_PACKAGE_ID: &str = "omendesk";
 const METADATA_SCHEMA_VERSION: u32 = 1;
 const SIGNATURE_SCHEMA_VERSION: u32 = 1;
 const SIGNATURE_ALGORITHM: &str = "ed25519";
 
 const TRUSTED_UPDATE_KEYS: &[TrustedUpdateKey] = &[TrustedUpdateKey {
-    key_id: "2026-ed25519-main",
+    key_id: "2026-ed25519-omendesk",
     algorithm: SIGNATURE_ALGORITHM,
     public_key: [
-        118, 252, 116, 215, 49, 217, 220, 109, 145, 119, 210, 101, 225, 198, 63, 2, 41, 127, 197,
-        127, 52, 251, 6, 204, 125, 117, 96, 204, 187, 166, 85, 59,
+        50, 196, 101, 240, 174, 235, 82, 128, 100, 243, 134, 17, 77, 199, 129, 163, 17, 239, 135,
+        101, 100, 236, 206, 186, 122, 34, 2, 158, 23, 89, 210, 8,
     ],
 }];
 
@@ -265,7 +265,6 @@ fn select_artifact<'a>(
     Ok(artifact)
 }
 
-#[cfg(target_os = "macos")]
 #[cfg(test)]
 #[path = "update_metadata_tests.rs"]
 mod tests;

@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn resolves_public_and_custom_update_package_identity() {
         assert_eq!(
-            "rustdesk",
+            "omendesk",
             expected_update_package_id(false, Some("com.carriez.rustdesk".to_owned())).unwrap()
         );
         assert_eq!(

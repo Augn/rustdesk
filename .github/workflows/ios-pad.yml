@@ -6,12 +6,11 @@ on:
       source-ref:
         description: "Release source ref to build"
         type: string
-        default: "1.5.1"
+        default: "1.5.2"
         required: true
       bridge-run-id:
         description: "Successful source build run containing the matching bridge-artifact"
         type: string
-        default: "35885121706"
         required: true
 
 permissions:
@@ -35,6 +34,12 @@ jobs:
         with:
           ref: ${{ inputs.source-ref }}
           submodules: recursive
+
+      - name: Read release version
+        run: |
+          app_version="$(awk '/^version:/ { print $2 }' flutter/pubspec.yaml)"
+          echo "APP_VERSION=${app_version%+*}" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=${app_version##*+}" >> "$GITHUB_ENV"
 
       - name: Verify bridge source
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410
@@ -130,8 +135,8 @@ jobs:
           assert 2 in info['UIDeviceFamily'], 'iPad support missing'
           assert info['CFBundleIdentifier'] == 'com.carriez.omendesk'
           assert info['CFBundleDisplayName'] == 'omendesk'
-          assert info['CFBundleShortVersionString'] == '1.5.1'
-          assert str(info['CFBundleVersion']) == '70'
+          assert info['CFBundleShortVersionString'] == os.environ['APP_VERSION']
+          assert str(info['CFBundleVersion']) == os.environ['APP_BUILD_NUMBER']
           assert not (app / 'embedded.mobileprovision').exists()
           record = {key: info.get(key) for key in (
               'CFBundleIdentifier', 'CFBundleDisplayName', 'CFBundleShortVersionString',
@@ -144,14 +149,15 @@ jobs:
           STAGE="$(mktemp -d)"
           mkdir -p "$STAGE/Payload"
           cp -R "$APP_DIR" "$STAGE/Payload/"
-          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/ipad-ipa/omendesk-1.5.1-aarch64-ios-unsigned.ipa" Payload)
-          unzip -tq ipad-ipa/omendesk-1.5.1-aarch64-ios-unsigned.ipa
+          IPA_PATH="ipad-ipa/omendesk-${APP_VERSION}-aarch64-ios-unsigned.ipa"
+          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/$IPA_PATH" Payload)
+          unzip -tq "$IPA_PATH"
           git rev-parse HEAD > ipad-ipa/SOURCE_COMMIT.txt
-          shasum -a 256 ipad-ipa/omendesk-1.5.1-aarch64-ios-unsigned.ipa > ipad-ipa/SHA256SUMS.txt
+          shasum -a 256 "$IPA_PATH" > ipad-ipa/SHA256SUMS.txt
 
       - name: Upload unsigned iPad IPA
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ipad-ipa-1.5.1
+          name: ipad-ipa-${{ env.APP_VERSION }}
           path: ipad-ipa/
           if-no-files-found: error

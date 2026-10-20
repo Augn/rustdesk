@@ -104,16 +104,16 @@ pub(super) fn verified_update_artifact_from_release_page_url(
     update_url: &str,
     query: &UpdateArtifactQuery<'_>,
 ) -> ResultType<VerifiedUpdateArtifact> {
-    if crate::get_app_name() != "RustDesk" {
+    if crate::get_app_name() != "omendesk" {
         bail!(
-            "Omendesk signed update metadata is not configured. Download and install manually from {}",
+            "Signed automatic updates are unavailable for this custom client. Download and install manually from {}",
             crate::common::SOFTWARE_UPDATE_RELEASE_URL
         );
     }
     let release_id = release_id_from_update_url(update_url)?;
     let display_version = display_version_from_release_id(&release_id)?;
     let expected_artifact_url_prefix =
-        format!("https://github.com/rustdesk/rustdesk/releases/download/{release_id}/");
+        format!("https://github.com/Augn/rustdesk/releases/download/{release_id}/");
     let metadata_url = format!("{expected_artifact_url_prefix}rustdesk-update.json");
     let signature_url = format!("{metadata_url}.sig");
     let metadata_bytes = fetch_update_sidecar_bytes(&metadata_url)?;
@@ -183,7 +183,7 @@ pub fn get_update_download_file_from_url(url: &str) -> Option<PathBuf> {
     let tag = segments.next()?;
     let filename = segments.next()?;
 
-    if owner != "rustdesk"
+    if owner != "Augn"
         || repo != "rustdesk"
         || releases != "releases"
         || download != "download"
@@ -219,50 +219,50 @@ mod tests {
 
     #[test]
     fn omendesk_rejects_official_rustdesk_updates() {
-        let result = verified_update_artifact_from_release_page_url(
-            "https://github.com/rustdesk/rustdesk/releases/tag/1.5.1",
-            &UpdateArtifactQuery {
-                platform: "windows",
-                arch: "x86_64",
-                format: "exe",
-            },
-        );
-
-        assert_eq!(
-            result.err().map(|error| error.to_string()),
-            Some(format!(
-                "Omendesk signed update metadata is not configured. Download and install manually from {}",
-                crate::common::SOFTWARE_UPDATE_RELEASE_URL
-            ))
-        );
+        for url in [
+            "https://github.com/rustdesk/rustdesk/releases/tag/1.5.2",
+            "https://github.com/Augn/rustdesk/releases/tag/master",
+            "https://github.com/Augn/rustdesk/releases/tag/1.5.2-rc1",
+        ] {
+            assert!(verified_update_artifact_from_release_page_url(
+                url,
+                &UpdateArtifactQuery {
+                    platform: "windows",
+                    arch: "x86_64",
+                    format: "exe",
+                },
+            )
+            .is_err());
+        }
     }
 
     #[test]
     fn update_download_file_accepts_expected_github_asset_urls() {
         let file = get_update_download_file_from_url(
-            "https://github.com/rustdesk/rustdesk/releases/download/1.4.0/rustdesk-1.4.0-x86_64.dmg",
+            "https://github.com/Augn/rustdesk/releases/download/1.5.2/omendesk-1.5.2-x86_64.dmg",
         )
         .expect("valid GitHub release asset URL");
 
         assert_eq!(
             file.file_name().and_then(|name| name.to_str()),
-            Some("rustdesk-1.4.0-x86_64.dmg")
+            Some("omendesk-1.5.2-x86_64.dmg")
         );
     }
 
     #[test]
     fn update_download_file_rejects_untrusted_or_malformed_urls() {
         for url in [
-            "http://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
+            "https://github.com/rustdesk/rustdesk/releases/download/1.5.2/rustdesk.exe",
+            "http://github.com/Augn/rustdesk/releases/download/1/rustdesk.exe",
             "https://example.com/rustdesk.exe",
             "https://github.com/other/project/releases/download/1/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/nested/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/C:rustdesk.exe",
-            "https://user@github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com:443/rustdesk/rustdesk/releases/download/1/rustdesk.exe",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe?download=1",
-            "https://github.com/rustdesk/rustdesk/releases/download/1/rustdesk.exe#download",
+            "https://github.com/Augn/rustdesk/releases/download/1/",
+            "https://github.com/Augn/rustdesk/releases/download/1/nested/rustdesk.exe",
+            "https://github.com/Augn/rustdesk/releases/download/1/C:rustdesk.exe",
+            "https://user@github.com/Augn/rustdesk/releases/download/1/rustdesk.exe",
+            "https://github.com:443/Augn/rustdesk/releases/download/1/rustdesk.exe",
+            "https://github.com/Augn/rustdesk/releases/download/1/rustdesk.exe?download=1",
+            "https://github.com/Augn/rustdesk/releases/download/1/rustdesk.exe#download",
             "not a url",
         ] {
             assert!(get_update_download_file_from_url(url).is_none(), "{url}");

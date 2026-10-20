@@ -6,12 +6,11 @@ on:
       source-ref:
         description: "Release source ref to build"
         type: string
-        default: "1.5.1"
+        default: "1.5.2"
         required: true
       bridge-run-id:
         description: "Successful source build run containing the matching bridge-artifact"
         type: string
-        default: "35885121706"
         required: true
 
 permissions:

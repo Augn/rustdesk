@@ -11,6 +11,10 @@ on:
         description: "Build Windows packages for local hardware-token signing without publishing"
         type: boolean
         default: false
+      build-only:
+        description: "Stage release assets as workflow artifacts without publishing or notifying clients"
+        type: boolean
+        default: false
   # Automatic triggers disabled; run manually only.
   # push:
   #   tags:
@@ -29,3 +33,4 @@ jobs:
       macos-only: ${{ inputs.macos-only }}
       windows-signing-candidate: ${{ inputs.windows-signing-candidate }}
       publish-update-metadata: ${{ github.repository == 'rustdesk/rustdesk' }}
+      publish-release: ${{ !inputs.build-only }}
