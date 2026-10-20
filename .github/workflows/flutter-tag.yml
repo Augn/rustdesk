@@ -28,3 +28,4 @@ jobs:
       upload-tag: ${{ github.ref_name }}
       macos-only: ${{ inputs.macos-only }}
       windows-signing-candidate: ${{ inputs.windows-signing-candidate }}
+      publish-update-metadata: ${{ github.repository == 'rustdesk/rustdesk' }}
