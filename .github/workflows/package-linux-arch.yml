@@ -99,6 +99,7 @@ jobs:
           shopt -s nullglob
           packages=(res/rustdesk-"$VERSION"-*-x86_64.pkg.tar.zst)
           test "${#packages[@]}" -eq 1
+          sudo chown "$(id -u):$(id -g)" recovery
           mkdir -p recovery/output
           tar -xOf "${packages[0]}" .PKGINFO > recovery/output/PKGINFO.txt
           grep -Fx 'pkgname = rustdesk' recovery/output/PKGINFO.txt
