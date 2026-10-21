@@ -65,6 +65,13 @@ jobs:
                 $signature.SignerCertificate.Thumbprint -ne 'D95F12062FFD578313E66D465879F0F20C52E8B5' -or
                 -not $signature.TimeStamperCertificate) { throw "Invalid Omendesk signature: $path" }
           }
+          $binaries = Get-ChildItem rustdesk -Recurse -File -Include *.exe,*.dll
+          foreach ($binary in $binaries) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $binary.FullName
+            if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
+              throw "Invalid runtime signature: $($binary.FullName) ($($signature.Status))"
+            }
+          }
           $reportedVersion = (& ./rustdesk/rustdesk.exe --version | Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or $reportedVersion -ne $env:VERSION) { throw 'Signed app version does not match Cargo.toml' }
 
