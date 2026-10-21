@@ -1,0 +1,118 @@
+name: Recover Linux Arch package
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: Source ref of the already-built application
+        type: string
+        default: "1.5.2"
+        required: true
+      build-run-id:
+        description: Source build run containing the verified x86_64 Debian package
+        type: string
+        default: "39518322488"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout application source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          persist-credentials: false
+
+      - name: Verify original native build
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        env:
+          BUILD_RUN_ID: ${{ inputs.build-run-id }}
+        with:
+          script: |
+            const runId = Number(process.env.BUILD_RUN_ID);
+            if (!Number.isSafeInteger(runId) || runId <= 0) {
+              throw new Error('build-run-id must be a positive integer');
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
+            let sourceSha = '';
+            await exec.exec('git', ['rev-parse', 'HEAD'], {
+              listeners: { stdout: data => sourceSha += data.toString() },
+            });
+            if (run.head_sha !== sourceSha.trim()) {
+              throw new Error('Debian artifact must come from the exact application source commit');
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: runId, filter: 'all', per_page: 100,
+            });
+            const job = jobs.find(job => job.name.endsWith('build rustdesk linux x86_64-unknown-linux-gnu')
+              && ['Build rustdesk', 'Upload deb'].every(name => job.steps.some(step => step.name === name && step.conclusion === 'success')));
+            if (!job) {
+              throw new Error('Original Linux x86_64 native build and Debian upload must both succeed');
+            }
+            core.exportVariable('SOURCE_COMMIT', sourceSha.trim());
+            core.exportVariable('SOURCE_BUILD_RUN_ID', runId.toString());
+
+      - name: Read application version
+        run: |
+          version="$(sed -n 's/^version = "\([0-9]*\.[0-9]*\.[0-9]*\)"$/\1/p' Cargo.toml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Download original Debian package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rustdesk-${{ env.VERSION }}-x86_64.deb
+          path: recovery/input
+          run-id: ${{ inputs.build-run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify Debian package and restore Flutter bundle
+        run: |
+          deb="recovery/input/rustdesk-${VERSION}-x86_64.deb"
+          test "$(dpkg-deb -f "$deb" Package)" = rustdesk
+          test "$(dpkg-deb -f "$deb" Version)" = "$VERSION"
+          test "$(dpkg-deb -f "$deb" Architecture)" = amd64
+          dpkg-deb -x "$deb" recovery/extracted
+          bundle=flutter/build/linux/x64/release/bundle
+          mkdir -p "$bundle"
+          for entry in rustdesk data lib; do
+            cp -a "recovery/extracted/usr/share/rustdesk/$entry" "$bundle/"
+          done
+          test -f "$bundle/lib/librustdesk.so"
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" res/PKGBUILD
+
+      - name: Package existing native bundle
+        uses: rustdesk-org/arch-makepkg-action@04200739ed1d0bf6f2188b6736b26a767c57a7f9
+        with:
+          packages:
+          scripts: |
+            cd res && HBB=`pwd`/.. FLUTTER=1 makepkg -f
+
+      - name: Verify Arch package and record provenance
+        run: |
+          shopt -s nullglob
+          packages=(res/rustdesk-"$VERSION"-*-x86_64.pkg.tar.zst)
+          test "${#packages[@]}" -eq 1
+          mkdir -p recovery/output
+          tar -xOf "${packages[0]}" .PKGINFO > recovery/output/PKGINFO.txt
+          grep -Fx 'pkgname = rustdesk' recovery/output/PKGINFO.txt
+          grep -Fx "pkgver = ${VERSION}-0" recovery/output/PKGINFO.txt
+          grep -Fx 'arch = x86_64' recovery/output/PKGINFO.txt
+          cp "${packages[0]}" recovery/output/
+          printf '%s\n' "$SOURCE_COMMIT" > recovery/output/SOURCE_COMMIT.txt
+          printf '%s\n' "$SOURCE_BUILD_RUN_ID" > recovery/output/SOURCE_BUILD_RUN.txt
+          printf '%s\n' "$GITHUB_WORKFLOW_SHA" > recovery/output/PACKAGING_WORKFLOW_SHA.txt
+          sha256sum recovery/input/*.deb recovery/output/*.pkg.tar.zst > recovery/output/SHA256SUMS.txt
+
+      - name: Upload recovered Arch package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: recovered-arch-${{ env.VERSION }}-x86_64
+          path: recovery/output/
+          if-no-files-found: error
