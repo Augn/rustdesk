@@ -57,7 +57,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Add Tag", "Add tag"),
         ("Wrong credentials", "Wrong username or password"),
         ("Edit Tag", "Edit tag"),
-        ("Forget Password", "Forget password"),
+        ("Forget Password", "Clear saved password"),
         ("Add to Favorites", "Add to favorites"),
         ("Remove from Favorites", "Remove from favorites"),
         ("Socks5 Proxy", "Socks5 proxy"),
@@ -293,5 +293,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("api_server_connection_tip", "Your custom server uses unencrypted HTTP. Contact your administrator to enable HTTPS."),
         ("api_server_empty_tip", "With API Server empty, your custom server defaults to HTTP. Contact your administrator to enable HTTPS."),
         ("sync-clipboard-between-sessions-default-tip", "Enabled by default. Sync text, images, and supported files and folders between connected sessions in this client when the relevant permissions are allowed. File forwarding requires compatible new clients on both remote computers with file copy and paste enabled."),
+        ("android-logs-folder-tip", "Choose Android → media to store log files."),
+        ("install-directory-not-empty-tip", "The selected folder is not empty. Installation may delete existing data. Consider choosing a different folder."),
     ].iter().cloned().collect();
 }
