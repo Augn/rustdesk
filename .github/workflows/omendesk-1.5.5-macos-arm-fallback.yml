@@ -1,0 +1,288 @@
+name: OmenDesk 1.5.5 source-pinned macOS arm candidate
+
+on:
+  push:
+    branches:
+      - release-1.5.5-macos-arm-fallback
+    paths:
+      - .github/workflows/omendesk-1.5.5-macos-arm-fallback.yml
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_REPOSITORY: Augn/rustdesk
+  SOURCE_TAG: "1.5.5"
+  SOURCE_SHA: "fbb325e6d773ee1f873a0b7b297784c91b0ee769"
+  EXPECTED_BUILD: "74"
+  BRIDGE_RUN_ID: "44091071919"
+  BRIDGE_ARTIFACT_ID: "14333540062"
+  BRIDGE_ARTIFACT_NAME: bridge-artifact-flutter-3.44
+  BRIDGE_ZIP_SHA256: "c1f15081a31478b56ce83c8238c1b551850b420c6f9a8443edb783f2fe5c2c96"
+  UPLOAD_ARTIFACT: "true"
+  MAC_RUST_VERSION: "1.81" # 1.81 is requred for macos, because of https://github.com/yury/cidre requires 1.81
+  FLUTTER_VERSION: "3.24.5"
+  FLUTTER_MACOS_ARM_VERSION: "3.44.9"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VERSION: "1.5.5"
+
+jobs:
+  native:
+    name: aarch64-apple-darwin
+    if: github.repository == 'Augn/rustdesk'
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      matrix:
+        job:
+          - target: aarch64-apple-darwin
+            os: macos-15
+            extra-build-args: "--screencapturekit"
+            arch: aarch64
+            vcpkg-triplet: arm64-osx
+    steps:
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Verify pinned source and select Xcode
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch --no-tags origin "refs/tags/$SOURCE_TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"
+          git rev-parse HEAD > SOURCE_COMMIT.txt
+          git submodule status --recursive > SOURCE_SUBMODULES.txt
+          if grep -Eq '^[-+U]' SOURCE_SUBMODULES.txt; then
+            echo "A submodule does not match the pinned superproject"
+            exit 1
+          fi
+          XCODE_DIR=/Applications/Xcode_26.3.app/Contents/Developer
+          test -x "$XCODE_DIR/usr/bin/xcodebuild"
+          echo "DEVELOPER_DIR=$XCODE_DIR" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_DIR"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          pod --version
+          sw_vers
+
+      - name: Install build runtime
+        run: |
+          brew install llvm create-dmg
+          # pkg-config is handled in a separate step, because it may be already installed by `macos-latest`(14.7.1) runner
+          if command -v pkg-config &>/dev/null; then
+              echo "pkg-config is already installed"
+          else
+              brew install pkg-config
+          fi
+
+      - name: Install flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ matrix.job.arch == 'aarch64' && env.FLUTTER_MACOS_ARM_VERSION || env.FLUTTER_VERSION }}
+
+      - name: Keep CocoaPods for Flutter 3.44 (arm64)
+        # 3.44 turns on Swift Package Manager by default, which would migrate Runner.xcodeproj and
+        # move some plugins off CocoaPods; every plugin still ships a podspec.
+        if: ${{ matrix.job.arch == 'aarch64' }}
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Workaround for flutter issue
+        shell: bash
+        run: |
+          cd "$(dirname "$(which flutter)")"
+          # https://github.com/flutter/flutter/issues/133533
+          sed -i -e 's/_setFramesEnabledState(false);/\/\/_setFramesEnabledState(false);/g' ../packages/flutter/lib/src/scheduler/binding.dart
+          grep -n '_setFramesEnabledState(false);' ../packages/flutter/lib/src/scheduler/binding.dart
+
+      - name: Patch RustDesk sources for Flutter 3.44 (arm64)
+        # The script uses GNU `sed -i`, which macOS's BSD sed rejects.
+        if: ${{ matrix.job.arch == 'aarch64' }}
+        shell: bash
+        run: |
+          brew install gnu-sed
+          export PATH="$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"
+          bash .github/patches/apply_flutter_3.44_source_patches.sh
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.MAC_RUST_VERSION }}
+          targets: ${{ matrix.job.target }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: ${{ matrix.job.os }}
+
+      - name: Restore pinned Flutter 3.44 bridge archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$SOURCE_REPOSITORY/actions/runs/$BRIDGE_RUN_ID" > "$RUNNER_TEMP/bridge-run.json"
+          gh api "repos/$SOURCE_REPOSITORY/actions/artifacts/$BRIDGE_ARTIFACT_ID" > "$RUNNER_TEMP/bridge-artifact.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          run = json.loads((temp / "bridge-run.json").read_text())
+          artifact = json.loads((temp / "bridge-artifact.json").read_text())
+          assert run["head_sha"] == os.environ["SOURCE_SHA"]
+          assert run["head_branch"] == os.environ["SOURCE_TAG"]
+          assert run["conclusion"] == "success"
+          assert artifact["workflow_run"]["id"] == int(os.environ["BRIDGE_RUN_ID"])
+          assert artifact["workflow_run"]["head_sha"] == os.environ["SOURCE_SHA"]
+          assert artifact["name"] == os.environ["BRIDGE_ARTIFACT_NAME"]
+          assert artifact["digest"] == "sha256:" + os.environ["BRIDGE_ZIP_SHA256"]
+          assert not artifact["expired"]
+          PY
+          bridge_zip="$RUNNER_TEMP/bridge-artifact.zip"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$SOURCE_REPOSITORY/actions/artifacts/$BRIDGE_ARTIFACT_ID/zip" \
+            -o "$bridge_zip"
+          printf '%s  %s\n' "$BRIDGE_ZIP_SHA256" "$bridge_zip" | shasum -a 256 --check
+          unzip -oq "$bridge_zip"
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        run: |
+          if ! $VCPKG_ROOT/vcpkg \
+            install \
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              echo "======"
+              cat "$_1"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+          head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${{ matrix.job.vcpkg-triplet }}-rel-out.log" || true
+
+      - name: Show version information (Rust, cargo, Clang)
+        shell: bash
+        run: |
+          clang --version || true
+          rustup -V
+          rustup toolchain list
+          rustup default
+          cargo -V
+          rustc -V
+
+      - name: Generate macOS AppIcon.icns from res/mac-icon.png
+        run: |
+          set -ex
+          ICONSET="$(mktemp -d)/AppIcon.iconset"
+          mkdir -p "$ICONSET"
+          SRC=res/mac-icon.png
+          for s in 16 32 64 128 256 512 1024; do
+            sips -z $s $s "$SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+          done
+          cp "$ICONSET/icon_32x32.png"  "$ICONSET/icon_16x16@2x.png"
+          cp "$ICONSET/icon_64x64.png"  "$ICONSET/icon_32x32@2x.png"
+          cp "$ICONSET/icon_256x256.png" "$ICONSET/icon_128x128@2x.png"
+          cp "$ICONSET/icon_512x512.png" "$ICONSET/icon_256x256@2x.png"
+          cp "$ICONSET/icon_1024x1024.png" "$ICONSET/icon_512x512@2x.png"
+          rm -f "$ICONSET/icon_64x64.png" "$ICONSET/icon_1024x1024.png"
+          iconutil -c icns -o flutter/macos/Runner/AppIcon.icns "$ICONSET"
+
+      - name: Build rustdesk
+        run: |
+          if [ "${{ matrix.job.target }}" = "aarch64-apple-darwin" ]; then
+            MIN_MACOS_VERSION="12.3"
+            sed -i -e "s/MACOSX_DEPLOYMENT_TARGET\=[0-9]*.[0-9]*/MACOSX_DEPLOYMENT_TARGET=${MIN_MACOS_VERSION}/" build.py
+            sed -i -e "s/platform :osx, '.*'/platform :osx, '${MIN_MACOS_VERSION}'/" flutter/macos/Podfile
+            sed -i -e "s/osx_minimum_system_version = \"[0-9]*.[0-9]*\"/osx_minimum_system_version = \"${MIN_MACOS_VERSION}\"/" Cargo.toml
+            sed -i -e "s/MACOSX_DEPLOYMENT_TARGET = [0-9]*.[0-9]*;/MACOSX_DEPLOYMENT_TARGET = ${MIN_MACOS_VERSION};/" flutter/macos/Runner.xcodeproj/project.pbxproj
+            echo "MACOSX_DEPLOYMENT_TARGET=${MIN_MACOS_VERSION}" >> "$GITHUB_ENV"
+          fi
+          ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
+
+      - name: Create ad-hoc signed DMG
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          CREATE_DMG="$(command -v create-dmg)"
+          CREATE_DMG="$(readlink -f "$CREATE_DMG")"
+          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
+          # build.py signs after copying the service binary. Verify again at the
+          # packaging boundary so a damaged signature can never be published.
+          codesign --verify --deep --strict --verbose=4 ./flutter/build/macos/Build/Products/Release/omendesk.app
+          DMG_PATH="omendesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg"
+          create-dmg --icon "omendesk.app" 200 190 --hide-extension "omendesk.app" --window-size 800 400 --app-drop-link 600 185 "$DMG_PATH" ./flutter/build/macos/Build/Products/Release/omendesk.app
+          MOUNT_POINT="$(mktemp -d)"
+          trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true; rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+          codesign --verify --deep --strict --verbose=4 "$MOUNT_POINT/omendesk.app"
+          python3 -c 'import subprocess, sys; subprocess.run([sys.argv[1], "--version"], check=True, timeout=30)' "$MOUNT_POINT/omendesk.app/Contents/MacOS/omendesk"
+          hdiutil detach "$MOUNT_POINT"
+          rmdir "$MOUNT_POINT"
+          trap - EXIT
+
+      - name: Record candidate provenance
+        run: |
+          artifact="omendesk-$VERSION-aarch64.dmg"
+          shasum -a 256 "$artifact" > SHA256SUMS.txt
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def command(*args):
+              return subprocess.check_output(args, text=True).strip()
+
+          artifact = "omendesk-" + os.environ["VERSION"] + "-aarch64.dmg"
+          record = {
+              "artifact": artifact,
+              "artifact_sha256": Path("SHA256SUMS.txt").read_text().split()[0],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "source_tag": os.environ["SOURCE_TAG"],
+              "orchestration_sha": os.environ["GITHUB_SHA"],
+              "orchestration_run": int(os.environ["GITHUB_RUN_ID"]),
+              "bridge_run": int(os.environ["BRIDGE_RUN_ID"]),
+              "bridge_zip_sha256": os.environ["BRIDGE_ZIP_SHA256"],
+              "arch": command("uname", "-m"),
+              "xcode": command("xcodebuild", "-version"),
+              "macos_sdk": command("xcrun", "--sdk", "macosx", "--show-sdk-version"),
+              "deployment_target": os.environ["MACOSX_DEPLOYMENT_TARGET"],
+              "version": os.environ["VERSION"],
+              "build": os.environ["EXPECTED_BUILD"],
+          }
+          Path("BUILD_PROVENANCE.json").write_text(json.dumps(record, indent=2) + "\n")
+          PY
+
+      - name: Upload exact-source ARM candidate and provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustdesk-unsigned-macos-aarch64-source-pinned
+          if-no-files-found: error
+          path: |
+            omendesk-1.5.5-aarch64.dmg
+            BUILD_PROVENANCE.json
+            SOURCE_COMMIT.txt
+            SOURCE_SUBMODULES.txt
+            SHA256SUMS.txt
