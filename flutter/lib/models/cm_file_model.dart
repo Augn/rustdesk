@@ -76,6 +76,7 @@ class CmFileModel {
     job.action =
         data.isRemote ? CmFileAction.remoteToLocal : CmFileAction.localToRemote;
     job.fileName = data.path;
+    job._transferCompleted = data.done && !data.cancel && data.error.isEmpty;
     job.totalSize = data.totalSize;
     job.finishedSize = data.finishedSize;
     if (job.finishedSize > data.totalSize) {
@@ -232,6 +233,14 @@ class CmFileLog {
   var fileName = "";
   var err = "";
   int lastTransferredSize = 0;
+  bool _transferCompleted = false;
+
+  // Transfer directions are relative to the controlling device.
+  String? get completedReceivePath => _transferCompleted &&
+          action == CmFileAction.localToRemote &&
+          fileName.startsWith('/')
+      ? fileName
+      : null;
 
   String display() {
     if (state == JobState.done && err == "skipped") {

@@ -1,5 +1,4 @@
 use super::{
-    item_data_provider::create_pasteboard_file_url_provider,
     paste_observer::PasteObserver,
     paste_task::{FileContentsResponse, PasteTask},
 };
@@ -9,24 +8,23 @@ use crate::{
     },
     send_data, ClipboardFile, CliprdrError, CliprdrServiceContext, ProgressPercent,
 };
-use hbb_common::{allow_err, bail, log, ResultType};
-use objc2::{msg_send_id, rc::autoreleasepool, rc::Id, runtime::ProtocolObject, ClassType};
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
+use hbb_common::{bail, log, ResultType};
+use objc2::{msg_send_id, rc::autoreleasepool, rc::Id, ClassType};
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL};
 use objc2_foundation::{NSArray, NSString};
 use std::{
+    collections::{hash_map::Entry, HashMap},
+    fs::{self, Metadata, OpenOptions},
     io,
-    path::Path,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
     sync::{
-        mpsc::{channel, Receiver, RecvTimeoutError, Sender},
+        mpsc::{channel, RecvTimeoutError, Sender},
         Arc, Mutex,
     },
     thread,
     time::Duration,
 };
-
-lazy_static::lazy_static! {
-    static ref PASTE_OBSERVER_INFO: Arc<Mutex<Option<PasteObserverInfo>>> = Default::default();
-}
 
 pub const TEMP_FILE_PREFIX: &str = ".rustdesk_";
 
@@ -38,23 +36,81 @@ pub(super) struct PasteObserverInfo {
     pub target_path: String,
 }
 
-impl PasteObserverInfo {
-    fn exit_msg() -> Self {
-        Self::default()
+struct Placeholder {
+    path: String,
+    metadata: Metadata,
+}
+
+impl Placeholder {
+    fn new() -> io::Result<Self> {
+        let path = format!("/tmp/{TEMP_FILE_PREFIX}{}", uuid::Uuid::new_v4());
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        match file.metadata() {
+            Ok(metadata) => Ok(Self { path, metadata }),
+            Err(error) => {
+                if let Err(cleanup) = fs::remove_file(&path) {
+                    log::warn!("Failed to remove uninitialized clipboard placeholder: {cleanup}");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn matches_source(&self, metadata: &Metadata) -> bool {
+        metadata.dev() == self.metadata.dev() && metadata.ino() == self.metadata.ino()
     }
 }
 
-struct ContextInfo {
-    tx: Sender<io::Result<PasteObserverInfo>>,
-    handle: thread::JoinHandle<()>,
+impl Drop for Placeholder {
+    fn drop(&mut self) {
+        let result = fs::symlink_metadata(&self.path).and_then(|metadata| {
+            if self.matches_source(&metadata) {
+                fs::remove_file(&self.path)?;
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            if error.kind() != io::ErrorKind::NotFound {
+                log::warn!("Failed to remove clipboard placeholder: {error}");
+            }
+        }
+    }
+}
+
+struct Offer {
+    conn_id: i32,
+    change_count: isize,
+    source: Placeholder,
+}
+
+struct PendingPaste {
+    source_path: String,
+    target_dir: PathBuf,
+}
+
+#[derive(Default)]
+struct PasteState {
+    offer: Option<Offer>,
+    pending: HashMap<i32, PendingPaste>,
+}
+
+impl PasteState {
+    fn take_response(&mut self, conn_id: i32) -> Option<PendingPaste> {
+        let pending = self.pending.remove(&conn_id)?;
+        let offer = self.offer.as_ref()?;
+        (offer.source.path == pending.source_path).then_some(pending)
+    }
 }
 
 pub struct PasteboardContext {
     pasteboard: Id<NSPasteboard>,
     observer: Arc<Mutex<PasteObserver>>,
-    tx_handle: Option<ContextInfo>,
-    tx_remove_file: Option<Sender<String>>,
-    remove_file_handle: Option<thread::JoinHandle<()>>,
+    state: Arc<Mutex<PasteState>>,
+    stop_cleanup: Sender<()>,
+    cleanup_thread: Option<thread::JoinHandle<()>>,
     tx_paste_task: Sender<FileContentsResponse>,
     paste_task: Arc<Mutex<PasteTask>>,
 }
@@ -64,10 +120,13 @@ unsafe impl Sync for PasteboardContext {}
 
 impl Drop for PasteboardContext {
     fn drop(&mut self) {
-        self.observer.lock().unwrap().stop();
-        if let Some(tx_handle) = self.tx_handle.take() {
-            if tx_handle.tx.send(Ok(PasteObserverInfo::exit_msg())).is_ok() {
-                tx_handle.handle.join().ok();
+        self.empty_clipboard_(0);
+        if let Err(error) = self.stop_cleanup.send(()) {
+            log::debug!("Clipboard cleanup thread already stopped: {error}");
+        }
+        if let Some(thread) = self.cleanup_thread.take() {
+            if thread.join().is_err() {
+                log::warn!("Clipboard cleanup thread panicked");
             }
         }
     }
@@ -96,121 +155,28 @@ impl CliprdrServiceContext for PasteboardContext {
 }
 
 impl PasteboardContext {
-    fn init(&mut self) {
-        let (tx_remove_file, rx_remove_file) = channel();
-        let handle_remove_file = Self::init_thread_remove_file(rx_remove_file);
-        self.tx_remove_file = Some(tx_remove_file.clone());
-        self.remove_file_handle = Some(handle_remove_file);
-
-        let (tx, rx) = channel();
-        let observer: Arc<Mutex<PasteObserver>> = self.observer.clone();
-        let handle = Self::init_thread_observer(tx_remove_file, rx, observer);
-        self.tx_handle = Some(ContextInfo { tx, handle });
-    }
-
-    fn init_thread_observer(
-        tx_remove_file: Sender<String>,
-        rx: Receiver<io::Result<PasteObserverInfo>>,
-        observer: Arc<Mutex<PasteObserver>>,
-    ) -> thread::JoinHandle<()> {
-        let exit_msg = PasteObserverInfo::exit_msg();
-        thread::spawn(move || loop {
-            match rx.recv() {
-                Ok(Ok(task_info)) => {
-                    if task_info == exit_msg {
-                        log::debug!("pasteboard item data provider: exit");
-                        break;
-                    }
-                    tx_remove_file.send(task_info.source_path.clone()).ok();
-                    observer.lock().unwrap().start(task_info);
-                }
-                Ok(Err(e)) => {
-                    log::error!("pasteboard item data provider, inner error: {e}");
-                }
-                Err(e) => {
-                    log::error!("pasteboard item data provider, error: {e}");
-                    break;
-                }
-            }
-        })
-    }
-
-    fn init_thread_remove_file(rx: Receiver<String>) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let mut cur_file: Option<String> = None;
-            loop {
-                match rx.recv_timeout(Duration::from_secs(30)) {
-                    Ok(path) => {
-                        if let Some(file) = cur_file.take() {
-                            if !file.is_empty() {
-                                std::fs::remove_file(&file).ok();
-                            }
-                        }
-                        if !path.is_empty() {
-                            cur_file = Some(path);
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(file) = cur_file.take() {
-                            if !file.is_empty() {
-                                std::fs::remove_file(&file).ok();
-                            }
-                        }
-                        if e == RecvTimeoutError::Disconnected {
-                            break;
-                        }
-                    }
-                }
-            }
-        })
-    }
-
-    // Just removing the file can also make paste option in the context menu disappear.
-    fn empty_clipboard_(&mut self, _conn_id: i32) -> bool {
-        self.tx_remove_file
+    fn empty_clipboard_(&mut self, conn_id: i32) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if let Some(offer) = state
+            .offer
             .as_ref()
-            .map(|tx| tx.send("".to_string()).ok());
-        true
-    }
-
-    fn temp_files_count() -> usize {
-        let mut count = 0;
-        if let Ok(entries) = std::fs::read_dir("/tmp") {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_file() {
-                        if let Some(file_name) = path.file_name() {
-                            if let Some(file_name_str) = file_name.to_str() {
-                                if file_name_str.starts_with(TEMP_FILE_PREFIX) {
-                                    count += 1;
-                                }
-                            }
-                        }
-                    }
+            .filter(|offer| conn_id == 0 || conn_id == offer.conn_id)
+        {
+            autoreleasepool(|_| unsafe {
+                if self.pasteboard.changeCount() == offer.change_count {
+                    self.pasteboard.clearContents();
                 }
-            }
+            });
+            state.offer = None;
+            self.observer.lock().unwrap().stop();
         }
-        count
+        true
     }
 
     fn server_clip_file_(&mut self, conn_id: i32, msg: ClipboardFile) -> Result<(), CliprdrError> {
         match msg {
             ClipboardFile::FormatList { format_list } => {
-                let temp_files = Self::temp_files_count();
-                if temp_files >= 3 {
-                    // The temp files should be 0 or 1 in normal case.
-                    // We should not continue to paste files if there are more than 3 temp files.
-                    return Err(CliprdrError::CommonError {
-                        description: format!(
-                            "too many temp files, current: {}, limit: {}",
-                            temp_files, 3
-                        ),
-                    });
-                }
-
-                let task_lock = self.paste_task.lock().unwrap();
-                if !task_lock.is_finished() {
+                if !self.paste_task.lock().unwrap().is_finished() {
                     return Err(CliprdrError::CommonError {
                         description: "previous file paste task is not finished".to_string(),
                     });
@@ -237,71 +203,77 @@ impl PasteboardContext {
     }
 
     fn handle_format_list(
-        &self,
+        &mut self,
         conn_id: i32,
         format_list: Vec<(i32, String)>,
     ) -> Result<(), CliprdrError> {
-        if let Some(tx_handle) = self.tx_handle.as_ref() {
-            if !format_list
-                .iter()
-                .find(|(_, name)| name == FILECONTENTS_FORMAT_NAME)
-                .map(|(id, _)| *id)
-                .is_some()
-            {
-                return Err(CliprdrError::CommonError {
-                    description: "no file contents format found".to_string(),
-                });
-            };
-            let Some(file_descriptor_id) = format_list
-                .iter()
-                .find(|(_, name)| name == FILEDESCRIPTORW_FORMAT_NAME)
-                .map(|(id, _)| *id)
-            else {
-                return Err(CliprdrError::CommonError {
-                    description: "no file descriptor format found".to_string(),
-                });
-            };
-
-            autoreleasepool(|_| self.set_clipboard_item(tx_handle, conn_id, file_descriptor_id))?;
-        } else {
+        if !format_list
+            .iter()
+            .any(|(_, name)| name == FILECONTENTS_FORMAT_NAME)
+        {
             return Err(CliprdrError::CommonError {
-                description: "pasteboard context is not inited".to_string(),
+                description: "no file contents format found".to_string(),
             });
         }
-        Ok(())
+        let Some(file_descriptor_id) = format_list
+            .iter()
+            .find(|(_, name)| name == FILEDESCRIPTORW_FORMAT_NAME)
+            .map(|(id, _)| *id)
+        else {
+            return Err(CliprdrError::CommonError {
+                description: "no file descriptor format found".to_string(),
+            });
+        };
+        autoreleasepool(|_| self.set_clipboard_item(conn_id, file_descriptor_id))
     }
 
     fn set_clipboard_item(
-        &self,
-        tx_handle: &ContextInfo,
+        &mut self,
         conn_id: i32,
         file_descriptor_id: i32,
     ) -> Result<(), CliprdrError> {
-        let tx = tx_handle.tx.clone();
-        let provider = create_pasteboard_file_url_provider(
-            PasteObserverInfo {
+        let source = Placeholder::new().map_err(|error| CliprdrError::CommonError {
+            description: format!("Failed to create clipboard placeholder: {error}"),
+        })?;
+        let url = NSString::from_str(&format!("file://{}", source.path));
+        let item = unsafe {
+            let item = NSPasteboardItem::new();
+            if !item.setString_forType(&url, NSPasteboardTypeFileURL) {
+                return Err(CliprdrError::CommonError {
+                    description: "failed to set the clipboard file URL".to_string(),
+                });
+            }
+            item
+        };
+        let mut state = self.state.lock().unwrap();
+        let mut observer = self.observer.lock().unwrap();
+        observer
+            .start(PasteObserverInfo {
                 file_descriptor_id,
                 conn_id,
-                source_path: "".to_string(),
-                target_path: "".to_string(),
-            },
-            tx,
-        );
+                source_path: source.path.clone(),
+                target_path: String::new(),
+            })
+            .map_err(|error| CliprdrError::CommonError {
+                description: format!("Failed to watch for file paste: {error}"),
+            })?;
         unsafe {
-            let types = NSArray::from_vec(vec![NSString::from_str(
-                &NSPasteboardTypeFileURL.to_string(),
-            )]);
-            let item = objc2_app_kit::NSPasteboardItem::new();
-            item.setDataProvider_forTypes(&ProtocolObject::from_id(provider), &types);
             self.pasteboard.clearContents();
             if !self
                 .pasteboard
                 .writeObjects(&Id::cast(NSArray::from_vec(vec![item])))
             {
+                state.offer = None;
+                observer.stop();
                 return Err(CliprdrError::CommonError {
-                    description: "failed to write objects".to_string(),
+                    description: "failed to write clipboard item".to_string(),
                 });
             }
+            state.offer = Some(Offer {
+                conn_id,
+                change_count: self.pasteboard.changeCount(),
+                source,
+            });
         }
         Ok(())
     }
@@ -312,43 +284,31 @@ impl PasteboardContext {
         msg_flags: i32,
         format_data: Vec<u8>,
     ) -> Result<(), CliprdrError> {
-        log::debug!("handle format data response, msg_flags: {msg_flags}");
-        if msg_flags != 0x1 {
-            // return failure message?
+        let mut state = self.state.lock().unwrap();
+        let Some(pending) = state.take_response(conn_id) else {
+            return Ok(());
+        };
+        if state.offer.as_ref().map(|offer| offer.change_count)
+            != Some(unsafe { self.pasteboard.changeCount() })
+        {
+            return Ok(());
         }
 
-        let mut task_lock = self.paste_task.lock().unwrap();
-        let target_dir = PASTE_OBSERVER_INFO
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|task| task.target_path.clone());
-        // unreachable in normal case
-        let Some(target_dir) = target_dir.as_ref().map(|d| Path::new(d).parent()).flatten() else {
-            return Err(CliprdrError::CommonError {
-                description: "failed to get parent path".to_string(),
+        let mut task = self.paste_task.lock().unwrap();
+        drop(state);
+        if msg_flags != 0x1 {
+            return Err(CliprdrError::InvalidRequest {
+                description: "The peer could not provide the clipboard file list".to_string(),
             });
-        };
-        // unreachable in normal case
-        if !target_dir.exists() {
+        }
+        if !pending.target_dir.is_dir() {
             return Err(CliprdrError::CommonError {
                 description: "target path does not exist".to_string(),
             });
         }
-        let target_dir = target_dir.to_owned();
-        match FileDescription::parse_file_descriptors(format_data, conn_id) {
-            Ok(files) => {
-                task_lock.start(target_dir, files);
-                Ok(())
-            }
-            Err(e) => {
-                PASTE_OBSERVER_INFO
-                    .lock()
-                    .unwrap()
-                    .replace(PasteObserverInfo::default());
-                Err(e)
-            }
-        }
+        let files = FileDescription::parse_file_descriptors(format_data, conn_id)?;
+        task.start(pending.target_dir, files);
+        Ok(())
     }
 
     fn handle_file_contents_response(
@@ -358,15 +318,14 @@ impl PasteboardContext {
         stream_id: i32,
         requested_data: Vec<u8>,
     ) -> Result<(), CliprdrError> {
-        log::debug!("handle file contents response");
-        self.tx_paste_task
-            .send(FileContentsResponse {
-                conn_id,
-                msg_flags,
-                stream_id,
-                requested_data,
-            })
-            .ok();
+        if let Err(error) = self.tx_paste_task.send(FileContentsResponse {
+            conn_id,
+            msg_flags,
+            stream_id,
+            requested_data,
+        }) {
+            log::trace!("File clipboard worker has stopped: {error}");
+        }
         Ok(())
     }
 
@@ -381,31 +340,77 @@ impl PasteboardContext {
     }
 }
 
-fn handle_paste_result(task_info: &PasteObserverInfo) {
-    log::info!(
-        "file {} is pasted to {}",
-        &task_info.source_path,
-        &task_info.target_path
-    );
-    if Path::new(&task_info.target_path).parent().is_none() {
-        log::error!(
-            "failed to get parent path of {}, no need to perform pasting",
-            &task_info.target_path
-        );
+fn clipboard_change_count() -> Option<isize> {
+    autoreleasepool(|_| unsafe {
+        let pasteboard: Option<Id<NSPasteboard>> =
+            msg_send_id![NSPasteboard::class(), generalPasteboard];
+        pasteboard.map(|pasteboard| pasteboard.changeCount())
+    })
+}
+
+fn copied_placeholder_target(target: &Path, source: &Placeholder) -> Option<PathBuf> {
+    let source_path = Path::new(&source.path);
+    if !target.is_absolute() || target.file_name()? != source_path.file_name()? {
+        return None;
+    }
+    let parent = target.parent()?;
+    let metadata = fs::symlink_metadata(target).ok()?;
+    if !metadata.is_file() || metadata.len() != 0 || source.matches_source(&metadata) {
+        return None;
+    }
+    Some(parent.to_path_buf())
+}
+
+fn handle_paste_result(
+    info: &PasteObserverInfo,
+    state: &Mutex<PasteState>,
+    task: &Mutex<PasteTask>,
+) {
+    let mut state = state.lock().unwrap();
+    let Some(offer) = &state.offer else {
+        return;
+    };
+    if info.source_path != offer.source.path
+        || info.conn_id != offer.conn_id
+        || clipboard_change_count() != Some(offer.change_count)
+    {
         return;
     }
-
-    PASTE_OBSERVER_INFO
-        .lock()
-        .unwrap()
-        .replace(task_info.clone());
-    // to-do: add a timeout to clear data in `PASTE_OBSERVER_INFO`.
-    std::fs::remove_file(&task_info.source_path).ok();
-    std::fs::remove_file(&task_info.target_path).ok();
-    let data = ClipboardFile::FormatDataRequest {
-        requested_format_id: task_info.file_descriptor_id,
+    let target = Path::new(&info.target_path);
+    let Some(target_dir) = copied_placeholder_target(target, &offer.source) else {
+        return;
     };
-    allow_err!(send_data(task_info.conn_id as _, data));
+    if let Err(error) = fs::remove_file(target) {
+        log::warn!("Failed to remove the Finder clipboard placeholder: {error}");
+        return;
+    }
+    {
+        let channels = crate::VEC_MSG_CHANNEL.read().unwrap();
+        state.pending.retain(|conn_id, _| {
+            channels
+                .iter()
+                .any(|channel| channel.conn_id == *conn_id && !channel.sender.is_closed())
+        });
+    }
+    // Replies contain no request ID, so each live connection keeps its reservation
+    // until the response arrives, even if another connection takes over the clipboard.
+    let Entry::Vacant(reservation) = state.pending.entry(info.conn_id) else {
+        return;
+    };
+    if !task.lock().unwrap().is_finished() {
+        return;
+    }
+    let data = ClipboardFile::FormatDataRequest {
+        requested_format_id: info.file_descriptor_id,
+    };
+    if let Err(error) = send_data(info.conn_id, data) {
+        log::warn!("Failed to request clipboard file data: {error}");
+        return;
+    }
+    reservation.insert(PendingPaste {
+        source_path: info.source_path.clone(),
+        target_dir,
+    });
 }
 
 #[inline]
@@ -415,18 +420,113 @@ pub fn create_pasteboard_context() -> ResultType<Box<PasteboardContext>> {
     let Some(pasteboard) = pasteboard else {
         bail!("failed to get general pasteboard");
     };
-    let mut observer = PasteObserver::new();
-    observer.init(handle_paste_result)?;
+    let state = Arc::new(Mutex::new(PasteState::default()));
     let (tx, rx) = channel();
-    let mut context = Box::new(PasteboardContext {
+    let paste_task = Arc::new(Mutex::new(PasteTask::new(rx)));
+    let observer_state = state.clone();
+    let observer_task = paste_task.clone();
+    let mut observer = PasteObserver::new();
+    observer.init(move |info| handle_paste_result(info, &observer_state, &observer_task))?;
+    let observer = Arc::new(Mutex::new(observer));
+
+    let (stop_cleanup, cleanup) = channel();
+    let cleanup_state = state.clone();
+    let cleanup_observer = observer.clone();
+    let cleanup_thread = thread::Builder::new()
+        .name("clipboard-offer".into())
+        .spawn(move || {
+            while let Err(RecvTimeoutError::Timeout) = cleanup.recv_timeout(Duration::from_secs(1))
+            {
+                let mut state = cleanup_state.lock().unwrap();
+                if let Some(offer) = &state.offer {
+                    if clipboard_change_count().is_some_and(|count| count != offer.change_count) {
+                        state.offer = None;
+                        cleanup_observer.lock().unwrap().stop();
+                    }
+                }
+            }
+        })?;
+
+    Ok(Box::new(PasteboardContext {
         pasteboard,
-        observer: Arc::new(Mutex::new(observer)),
-        tx_handle: None,
-        tx_remove_file: None,
-        remove_file_handle: None,
+        observer,
+        state,
+        stop_cleanup,
+        cleanup_thread: Some(cleanup_thread),
         tx_paste_task: tx,
-        paste_task: Arc::new(Mutex::new(PasteTask::new(rx))),
-    });
-    context.init();
-    Ok(context)
+        paste_task,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_source_survives_repeated_finder_copies() {
+        let source = Placeholder::new().unwrap();
+        let source_path = PathBuf::from(&source.path);
+        let directory = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&directory).unwrap();
+        let target = directory.join(source_path.file_name().unwrap());
+
+        assert!(copied_placeholder_target(&source_path, &source).is_none());
+        for _ in 0..2 {
+            fs::copy(&source_path, &target).unwrap();
+            assert_eq!(
+                copied_placeholder_target(&target, &source),
+                Some(directory.clone())
+            );
+            fs::remove_file(&target).unwrap();
+            assert!(source_path.is_file());
+        }
+
+        fs::remove_dir(directory).unwrap();
+        drop(source);
+        assert!(!source_path.exists());
+    }
+
+    #[test]
+    fn descriptor_is_bound_to_its_connection_and_original_offer() {
+        let mut state = PasteState::default();
+        let publish = |state: &mut PasteState, conn_id| -> String {
+            let source = Placeholder::new().unwrap();
+            let path = source.path.clone();
+            state.offer = Some(Offer {
+                conn_id,
+                change_count: 1,
+                source,
+            });
+            path
+        };
+        let reserve = |state: &mut PasteState, conn_id, source_path| {
+            let Entry::Vacant(reservation) = state.pending.entry(conn_id) else {
+                return false;
+            };
+            reservation.insert(PendingPaste {
+                source_path,
+                target_dir: PathBuf::from("/tmp"),
+            });
+            true
+        };
+
+        let source_a = publish(&mut state, 1);
+        assert!(reserve(&mut state, 1, source_a));
+        let source_b = publish(&mut state, 2);
+        assert!(reserve(&mut state, 2, source_b));
+        assert_eq!(
+            state.take_response(2).map(|pending| pending.target_dir),
+            Some(PathBuf::from("/tmp"))
+        );
+
+        let new_source_a = publish(&mut state, 1);
+        assert!(!reserve(&mut state, 1, new_source_a.clone()));
+        assert!(state.take_response(2).is_none());
+        assert!(state.take_response(1).is_none());
+        assert!(reserve(&mut state, 1, new_source_a));
+        assert_eq!(
+            state.take_response(1).map(|pending| pending.target_dir),
+            Some(PathBuf::from("/tmp"))
+        );
+    }
 }

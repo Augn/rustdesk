@@ -145,12 +145,18 @@ pub fn is_file_url_set_by_rustdesk(url: &Vec<String>) -> bool {
     url.iter()
         .next()
         .map(|s| {
-            for prefix in &["file:///tmp/.rustdesk_", "//tmp/.rustdesk_"] {
-                if s.starts_with(prefix) {
-                    return s[prefix.len()..].parse::<uuid::Uuid>().is_ok();
-                }
-            }
-            false
+            use clipboard::platform::unix::macos::pasteboard_context::TEMP_FILE_PREFIX;
+            [
+                "file:///tmp/",
+                "file:///private/tmp/",
+                "//tmp/",
+                "/tmp/",
+                "/private/tmp/",
+            ]
+            .into_iter()
+            .find_map(|prefix| s.strip_prefix(prefix))
+            .and_then(|name| name.strip_prefix(TEMP_FILE_PREFIX))
+            .is_some_and(|id| id.parse::<uuid::Uuid>().is_ok())
         })
         .unwrap_or(false)
 }
@@ -197,7 +203,7 @@ pub fn try_empty_clipboard_files(_side: ClipboardSide, _conn_id: i32) {
     });
 }
 
-#[cfg(feature = "unix-file-copy-paste")]
+#[cfg(all(feature = "unix-file-copy-paste", not(target_os = "macos")))]
 pub fn try_empty_clipboard_files_sync(_side: ClipboardSide, _conn_id: i32) -> ResultType<()> {
     let mut ctx = CLIPBOARD_CTX.lock().unwrap();
     if ctx.is_none() {
@@ -220,19 +226,18 @@ pub fn try_empty_clipboard_files_sync(_side: ClipboardSide, _conn_id: i32) -> Re
                 ctx.try_empty_clipboard_files(_side);
             }
         }
-        #[cfg(target_os = "macos")]
-        {
-            ctx.try_empty_clipboard_files(_side);
-            // No need to make sure the context is enabled.
-            clipboard::ContextSend::proc(|context| -> ResultType<()> {
-                if !context.empty_clipboard(_conn_id)? {
-                    bail!("Failed to empty clipboard files for conn_id {}", _conn_id);
-                }
-                Ok(())
-            })?;
-        }
     }
     Ok(())
+}
+
+#[cfg(all(feature = "unix-file-copy-paste", target_os = "macos"))]
+pub fn try_empty_clipboard_files_sync(_side: ClipboardSide, conn_id: i32) -> ResultType<()> {
+    clipboard::ContextSend::proc(|context| -> ResultType<()> {
+        if !context.empty_clipboard(conn_id)? {
+            bail!("Failed to empty clipboard files for conn_id {conn_id}");
+        }
+        Ok(())
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -528,21 +533,6 @@ impl ClipboardContext {
         Ok(())
     }
 
-    #[cfg(all(feature = "unix-file-copy-paste", target_os = "macos"))]
-    fn get_file_urls_set_by_rustdesk(
-        data: Vec<ClipboardData>,
-        _side: ClipboardSide,
-    ) -> Vec<String> {
-        for item in data.into_iter() {
-            if let ClipboardData::FileUrl(urls) = item {
-                if is_file_url_set_by_rustdesk(&urls) {
-                    return urls;
-                }
-            }
-        }
-        vec![]
-    }
-
     #[cfg(all(feature = "unix-file-copy-paste", target_os = "linux"))]
     fn get_file_urls_set_by_rustdesk(data: Vec<ClipboardData>, side: ClipboardSide) -> Vec<String> {
         let exclude_path =
@@ -560,7 +550,7 @@ impl ClipboardContext {
             .collect::<Vec<_>>()
     }
 
-    #[cfg(feature = "unix-file-copy-paste")]
+    #[cfg(all(feature = "unix-file-copy-paste", target_os = "linux"))]
     fn try_empty_clipboard_files(&mut self, side: ClipboardSide) {
         let _lock = ARBOARD_MTX.lock().unwrap();
         if let Ok(data) = self.get_formats(&[ClipboardFormat::FileUrl]) {
@@ -572,11 +562,8 @@ impl ClipboardContext {
 
                 // Don't use `base::platform::linux::is_kde()` here.
                 // It's not correct in the server process.
-                #[cfg(target_os = "linux")]
                 let is_kde_x11 = base::platform::linux::is_kde_session()
                     && crate::platform::linux::is_x11();
-                #[cfg(target_os = "macos")]
-                let is_kde_x11 = false;
                 let clear_holder_text = if is_kde_x11 {
                     "RustDesk placeholder to clear the file clipboard"
                 } else {

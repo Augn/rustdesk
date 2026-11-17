@@ -1,6 +1,7 @@
 // original cm window in Sciter version.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -1260,16 +1261,48 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
     return statusList();
   }
 
-  Widget generateCard(Widget child) {
+  Widget generateCard(Widget child, {String? receivedPath}) {
+    const borderRadius = BorderRadius.all(Radius.circular(15));
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.all(
-          Radius.circular(15.0),
-        ),
+        borderRadius: borderRadius,
       ),
-      child: child,
+      child: receivedPath == null
+          ? child
+          : Material(
+              type: MaterialType.transparency,
+              child: Tooltip(
+                message: translate('Open'),
+                child: InkWell(
+                  borderRadius: borderRadius,
+                  onTap: () => _openReceivedPath(receivedPath),
+                  child: child,
+                ),
+              ),
+            ),
     );
+  }
+
+  Future<void> _openReceivedPath(String path) async {
+    try {
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      if (type == FileSystemEntityType.file ||
+          type == FileSystemEntityType.directory) {
+        final result = await Process.run('/usr/bin/open', [
+          if (type == FileSystemEntityType.directory) ...[
+            '-b',
+            'com.apple.finder',
+          ],
+          path,
+        ]);
+        if (result.exitCode == 0) return;
+        debugPrint('Opening received path failed (${result.stderr})');
+      }
+    } catch (error) {
+      debugPrint('Opening received path failed ($error)');
+    }
+    showToast(translate('Failed'));
   }
 
   iconLabel(CmFileLog item) {
@@ -1428,6 +1461,8 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                               ),
                             ],
                           ).paddingSymmetric(vertical: 10),
+                          receivedPath:
+                              isMacOS ? item.completedReceivePath : null,
                         ),
                       );
                     },
