@@ -366,8 +366,8 @@ fn handle_paste_result(
     state: &Mutex<PasteState>,
     task: &Mutex<PasteTask>,
 ) {
-    let mut state = state.lock().unwrap();
-    let Some(offer) = &state.offer else {
+    let state_guard = state.lock().unwrap();
+    let Some(offer) = &state_guard.offer else {
         return;
     };
     if info.source_path != offer.source.path
@@ -380,8 +380,20 @@ fn handle_paste_result(
     let Some(target_dir) = copied_placeholder_target(target, &offer.source) else {
         return;
     };
+    // macOS can wait for folder-access consent inside unlink.
+    drop(state_guard);
     if let Err(error) = fs::remove_file(target) {
         log::warn!("Failed to remove the Finder clipboard placeholder: {error}");
+        return;
+    }
+    let mut state = state.lock().unwrap();
+    let Some(offer) = &state.offer else {
+        return;
+    };
+    if info.source_path != offer.source.path
+        || info.conn_id != offer.conn_id
+        || clipboard_change_count() != Some(offer.change_count)
+    {
         return;
     }
     {

@@ -43,6 +43,10 @@
 	<string>MainMenu</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Record the sound from microphone for the purpose of the remote desktop.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Access your Desktop to transfer files and paste files copied from a remote computer.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Access your Downloads to transfer files and paste files copied from a remote computer.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
     <key>LSUIElement</key>
